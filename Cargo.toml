@@ -1,0 +1,16 @@
+[package]
+name = "glim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.79"
+gemm = { version = "0.17.1", features = ["wasm-simd128-enable"] }
+half = { version = "2.3.1", features = ["num-traits", "use-intrinsics", "rand_distr"] }
+num_cpus = "1.15.0"
+num-traits = "0.2.15"
+rand = "0.8.5"
+rand_distr = "0.4.3"
+rayon = "1.7.0"
+safetensors = "0.4.3"
+byteorder = "1.5.0"
