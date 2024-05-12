@@ -305,7 +305,7 @@ fn matmul(
             /* conj_dst: bool = */ false,
             /* conj_lhs: bool = */ false,
             /* conj_rhs: bool = */ false,
-            gemm::Parallelism::None,
+            gemm::Parallelism::Rayon(get_num_threads()),
         )
     }
     Ok(())
@@ -326,4 +326,13 @@ fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()> {
         }
     });
     Ok(())
+}
+
+fn get_num_threads() -> usize {
+    use std::str::FromStr;
+    // Respond to the same environment variable as rayon.
+    match std::env::var("RAYON_NUM_THREADS").ok().and_then(|s| usize::from_str(&s).ok()) {
+        Some(x) if x > 0 => x,
+        Some(_) | None => num_cpus::get(),
+    }
 }
