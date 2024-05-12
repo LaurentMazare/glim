@@ -33,6 +33,17 @@ impl Shape {
             Self::D5(..) => 5,
         }
     }
+
+    pub fn dims(&self) -> Vec<usize> {
+        match *self {
+            Self::D0 => vec![],
+            Self::D1(u0) => vec![u0],
+            Self::D2(u0, u1) => vec![u0, u1],
+            Self::D3(u0, u1, u2) => vec![u0, u1, u2],
+            Self::D4(u0, u1, u2, u3) => vec![u0, u1, u2, u3],
+            Self::D5(u0, u1, u2, u3, u4) => vec![u0, u1, u2, u3, u4],
+        }
+    }
 }
 
 impl From<()> for Shape {
@@ -189,8 +200,62 @@ impl Tensor {
         Ok(())
     }
 
+    pub fn num_elems(&self) -> usize {
+        self.shape.num_elems()
+    }
+
     pub fn rank(&self) -> usize {
         self.shape.rank()
+    }
+
+    pub fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize) -> Result<()> {
+        if src.num_elems() != self.num_elems() {
+            anyhow::bail!(
+                "num-elems mismatch in transpose, dst {:?} src {:?}",
+                self.shape(),
+                src.shape()
+            )
+        }
+        if dim1 >= src.rank() || dim2 >= src.rank() {
+            anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
+        }
+        if dim1 == dim2 {
+            self.data.copy_from_slice(&src.data);
+            return Ok(());
+        }
+        let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
+        let dims = src.shape().dims();
+        let d_i = dims[..dim1].iter().product::<usize>();
+        let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
+        let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
+        let d1 = dims[dim1];
+        let d2 = dims[dim2];
+        // Inefficient, we should blit the data where possible.
+        // i: pre
+        for i in 0..d_i {
+            for a1 in 0..d1 {
+                // j: mid
+                for j in 0..d_j {
+                    for a2 in 0..d2 {
+                        // k: post
+                        for k in 0..d_k {
+                            let src_idx = i * d1 * d_j * d2 * d_k
+                                + a1 * d_j * d2 * d_k
+                                + j * d2 * d_k
+                                + a2 * d_k
+                                + k;
+                            let dst_idx = i * d2 * d_j * d1 * d_k
+                                + a2 * d_j * d1 * d_k
+                                + j * d1 * d_k
+                                + a1 * d_k
+                                + k;
+                            self.data[dst_idx] = src.data[src_idx]
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn softmax(&mut self, src: &Self) -> Result<()> {
