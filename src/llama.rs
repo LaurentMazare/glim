@@ -121,9 +121,13 @@ pub struct State {
     attn_q: Tensor,
     attn_k: Tensor,
     attn_v: Tensor,
+    attn_q_t: Tensor,
+    attn_k_t: Tensor,
+    attn_v_t: Tensor,
     attn_sm: Tensor,
     attn_scores: Tensor,
     attn_xs: Tensor,
+    attn_xs_t: Tensor,
     logits: Tensor,
 }
 
@@ -135,22 +139,30 @@ impl State {
         let fc2_xs = Tensor::cst(0., (b_sz, seqlen, cfg.hidden_dim))?;
         let rms_xs = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, cfg.head_dim()))?;
+        let attn_xs_t = Tensor::cst(0., (b_sz, seqlen, cfg.n_heads * cfg.head_dim()))?;
         let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, seqlen))?;
         let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, seqlen))?;
         let attn_q = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         let attn_k = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         let attn_v = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
+        let attn_q_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
+        let attn_k_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
+        let attn_v_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         Ok(Self {
             xs,
             fc1_xs,
             fc2_xs,
             rms_xs,
             attn_xs,
+            attn_xs_t,
             attn_scores,
             attn_sm,
+            attn_q,
             attn_v,
             attn_k,
-            attn_q,
+            attn_q_t,
+            attn_v_t,
+            attn_k_t,
             logits,
         })
     }
@@ -185,19 +197,25 @@ impl Model {
                 // TODO: rotary embeddings
                 // kv-cache
                 // repeat-kv
-                // TODO: transpose q, k, v -> (b, h, t, d)
-                state.attn_q.reshape((b_sz * h, seqlen, d))?;
-                state.attn_k.reshape((b_sz * h, seqlen, d))?;
-                state.attn_v.reshape((b_sz * h, seqlen, d))?;
-                state.attn_scores.matmul(&state.attn_q, &state.attn_k, true)?;
+                state.attn_q.reshape((b_sz, seqlen, h, d))?;
+                state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
+                state.attn_q_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_k.reshape((b_sz, seqlen, h, d))?;
+                state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
+                state.attn_k_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_v.reshape((b_sz, seqlen, h, d))?;
+                state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
+                state.attn_v_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_scores.matmul(&state.attn_q_t, &state.attn_k_t, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                 // causal mask
                 state.attn_sm.softmax(&state.attn_scores)?;
                 // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                state.attn_xs.matmul(&state.attn_sm, &state.attn_v, false)?;
-                // TODO: transpose(1, 2)
-                state.attn_xs.reshape((b_sz, seqlen, h * d))?;
-                layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs)?;
+                state.attn_xs.matmul(&state.attn_sm, &state.attn_v_t, false)?;
+                state.attn_xs.reshape((b_sz, h, seqlen, d))?;
+                state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
+                state.attn_xs_t.reshape((b_sz, seqlen, h * d))?;
+                layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs_t)?;
             }
             state.xs.add(&state.rms_xs)?;
 
