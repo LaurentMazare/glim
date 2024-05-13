@@ -12,6 +12,8 @@ pub struct Config {
     pub vocab_size: usize,
     pub seq_len: usize,
     pub norm_eps: f32,
+    pub max_seq_len: usize,
+    pub rope_theta: f32,
 }
 
 impl Config {
@@ -25,6 +27,8 @@ impl Config {
             vocab_size: 32000,
             seq_len: 256,
             norm_eps: 1e-5,
+            max_seq_len: 4096,
+            rope_theta: 10000.,
         }
     }
 
@@ -129,6 +133,8 @@ pub struct State {
     attn_xs: Tensor,
     attn_xs_t: Tensor,
     logits: Tensor,
+    cos: Tensor,
+    sin: Tensor,
 }
 
 impl State {
@@ -148,6 +154,22 @@ impl State {
         let attn_q_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         let attn_k_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
         let attn_v_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
+        let head_dim = cfg.head_dim();
+        let theta: Vec<_> = (0..head_dim)
+            .step_by(2)
+            .map(|i| 1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32))
+            .collect();
+        let theta = Tensor::new(theta, (1, head_dim / 2))?;
+        let idx_theta = Tensor::new(
+            (0..cfg.max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
+            (cfg.max_seq_len, 1),
+        )?;
+        let mm = Tensor::cst(0., theta.num_elems() * idx_theta.num_elems())?;
+        let mut cos = mm.clone();
+        cos.cos();
+        let mut sin = mm.clone();
+        sin.sin();
+
         Ok(Self {
             xs,
             fc1_xs,
@@ -164,6 +186,8 @@ impl State {
             attn_v_t,
             attn_k_t,
             logits,
+            cos,
+            sin,
         })
     }
 

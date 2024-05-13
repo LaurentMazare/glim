@@ -135,6 +135,18 @@ impl Tensor {
         Ok(Self { data, shape })
     }
 
+    pub fn cos(&mut self) {
+        for d in self.data.iter_mut() {
+            *d = d.cos();
+        }
+    }
+
+    pub fn sin(&mut self) {
+        for d in self.data.iter_mut() {
+            *d = d.sin();
+        }
+    }
+
     pub fn silu(&mut self) {
         for d in self.data.iter_mut() {
             *d /= 1. + f32::exp(-*d)
