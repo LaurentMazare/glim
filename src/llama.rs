@@ -164,7 +164,8 @@ impl State {
             (0..cfg.max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
             (cfg.max_seq_len, 1),
         )?;
-        let mm = Tensor::cst(0., theta.num_elems() * idx_theta.num_elems())?;
+        let mut mm = Tensor::cst(0., theta.num_elems() * idx_theta.num_elems())?;
+        mm.matmul(&idx_theta, &theta, false)?;
         let mut cos = mm.clone();
         cos.cos();
         let mut sin = mm.clone();
@@ -218,18 +219,22 @@ impl Model {
                 layer.attn.q_proj.fwd(&mut state.attn_q, &state.rms_xs)?;
                 layer.attn.k_proj.fwd(&mut state.attn_k, &state.rms_xs)?;
                 layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
-                // TODO: rotary embeddings
-                // kv-cache
-                // repeat-kv
+
                 state.attn_q.reshape((b_sz, seqlen, h, d))?;
+                state.attn_q.rope(&state.cos, &state.sin)?;
                 state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
                 state.attn_q_t.reshape((b_sz * h, seqlen, d))?;
+
                 state.attn_k.reshape((b_sz, seqlen, h, d))?;
+                state.attn_k.rope(&state.cos, &state.sin)?;
                 state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
                 state.attn_k_t.reshape((b_sz * h, seqlen, d))?;
+
                 state.attn_v.reshape((b_sz, seqlen, h, d))?;
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
                 state.attn_v_t.reshape((b_sz * h, seqlen, d))?;
+                // kv-cache
+                // repeat-kv
                 state.attn_scores.matmul(&state.attn_q_t, &state.attn_k_t, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                 // causal mask

@@ -285,6 +285,22 @@ impl Tensor {
         };
         softmax(&mut self.data, &src.data, dim_m1)
     }
+
+    pub fn rope(&mut self, cos: &Self, sin: &Self) -> Result<()> {
+        let (b, h, t, d) = match self.shape() {
+            Shape::D4(b, h, t, d) => (*b, *h, *t, *d),
+            s => anyhow::bail!("unexpected shape for rope {s:?}"),
+        };
+        match cos.shape() {
+            Shape::D2(_t, d_over_2) if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.shape() {
+            Shape::D2(_t, d_over_2) if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        rope(&mut self.data, &cos.data, &sin.data, b, h, t, d)
+    }
 }
 
 fn matmul(
@@ -337,6 +353,34 @@ fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()> {
             *d /= sum_exp
         }
     });
+    Ok(())
+}
+
+fn rope(
+    dst: &mut [f32],
+    cos: &[f32],
+    sin: &[f32],
+    b: usize,
+    h: usize,
+    t: usize,
+    d: usize,
+) -> Result<()> {
+    if dst.len() != b * h * t * d {
+        anyhow::bail!("rope unexpected size for dst {} {b} {h} {t} {d}", dst.len())
+    }
+    dst.par_chunks_mut(t * d).for_each(|dst| {
+        for i_t in 0..t {
+            for i_d in 0..d / 2 {
+                let i1 = i_t * d + i_d;
+                let i2 = i1 + d / 2;
+                let i_cs = i_t * (d / 2) + i_d;
+                let (src_i1, src_i2) = (dst[i1], dst[i2]);
+                dst[i1] = src_i1 * cos[i_cs] - src_i2 * sin[i_cs];
+                dst[i2] = src_i1 * sin[i_cs] + src_i2 * cos[i_cs];
+            }
+        }
+    });
+
     Ok(())
 }
 
