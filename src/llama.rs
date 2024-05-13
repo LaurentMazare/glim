@@ -47,7 +47,7 @@ struct Linear {
 
 impl Linear {
     fn new(w: Tensor, in_c: usize, out_c: usize) -> Result<Self> {
-        if w.shape() != &Shape::D2(out_c, in_c) {
+        if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
         }
         Ok(Self { w, in_c, out_c })
@@ -66,7 +66,7 @@ struct RmsNorm {
 
 impl RmsNorm {
     fn new(w: Tensor, eps: f32, dim_m1: usize) -> Result<Self> {
-        if w.shape() != &Shape::D1(dim_m1) {
+        if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
         }
         Ok(Self { alpha: w, dim_m1, eps })
@@ -164,7 +164,7 @@ impl State {
             (0..cfg.max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
             (cfg.max_seq_len, 1),
         )?;
-        let mut mm = Tensor::cst(0., theta.num_elems() * idx_theta.num_elems())?;
+        let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count())?;
         mm.matmul(&idx_theta, &theta, false)?;
         let mut cos = mm.clone();
         cos.cos();
@@ -269,21 +269,15 @@ impl Model {
         let data = safetensors::SafeTensors::deserialize(&data)?;
         let get = |name: &str| {
             let data = data.tensor(name)?;
-            let shape = match data.shape() {
-                &[] => Shape::D0,
-                &[u] => Shape::D1(u),
-                &[u1, u2] => Shape::D2(u1, u2),
-                &[u1, u2, u3] => Shape::D3(u1, u2, u3),
-                s => anyhow::bail!("unsupported shapes {s:?}"),
-            };
+            let shape: Shape = data.shape().into();
             let mut data = std::io::Cursor::new(data.data());
-            let mut f32_data = vec![0f32; shape.num_elems()];
+            let mut f32_data = vec![0f32; shape.elem_count()];
             byteorder::ReadBytesExt::read_f32_into::<byteorder::LittleEndian>(
                 &mut data,
                 &mut f32_data,
             )?;
             let data = Tensor::new(f32_data, shape)?;
-            Ok(data)
+            Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;
         let mut layers = Vec::with_capacity(config.n_layers);

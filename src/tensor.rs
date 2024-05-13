@@ -1,86 +1,6 @@
+use crate::{Dim, Shape};
 use anyhow::Result;
 use rayon::prelude::*;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Shape {
-    D0,
-    D1(usize),
-    D2(usize, usize),
-    D3(usize, usize, usize),
-    D4(usize, usize, usize, usize),
-    D5(usize, usize, usize, usize, usize),
-}
-
-impl Shape {
-    pub fn num_elems(&self) -> usize {
-        match *self {
-            Self::D0 => 1,
-            Self::D1(u0) => u0,
-            Self::D2(u0, u1) => u0 * u1,
-            Self::D3(u0, u1, u2) => u0 * u1 * u2,
-            Self::D4(u0, u1, u2, u3) => u0 * u1 * u2 * u3,
-            Self::D5(u0, u1, u2, u3, u4) => u0 * u1 * u2 * u3 * u4,
-        }
-    }
-
-    pub fn rank(&self) -> usize {
-        match *self {
-            Self::D0 => 0,
-            Self::D1(_) => 1,
-            Self::D2(..) => 2,
-            Self::D3(..) => 3,
-            Self::D4(..) => 4,
-            Self::D5(..) => 5,
-        }
-    }
-
-    pub fn dims(&self) -> Vec<usize> {
-        match *self {
-            Self::D0 => vec![],
-            Self::D1(u0) => vec![u0],
-            Self::D2(u0, u1) => vec![u0, u1],
-            Self::D3(u0, u1, u2) => vec![u0, u1, u2],
-            Self::D4(u0, u1, u2, u3) => vec![u0, u1, u2, u3],
-            Self::D5(u0, u1, u2, u3, u4) => vec![u0, u1, u2, u3, u4],
-        }
-    }
-}
-
-impl From<()> for Shape {
-    fn from(_: ()) -> Self {
-        Self::D0
-    }
-}
-
-impl From<usize> for Shape {
-    fn from(v: usize) -> Self {
-        Self::D1(v)
-    }
-}
-
-impl From<(usize, usize)> for Shape {
-    fn from(v: (usize, usize)) -> Self {
-        Self::D2(v.0, v.1)
-    }
-}
-
-impl From<(usize, usize, usize)> for Shape {
-    fn from(v: (usize, usize, usize)) -> Self {
-        Self::D3(v.0, v.1, v.2)
-    }
-}
-
-impl From<(usize, usize, usize, usize)> for Shape {
-    fn from(v: (usize, usize, usize, usize)) -> Self {
-        Self::D4(v.0, v.1, v.2, v.3)
-    }
-}
-
-impl From<(usize, usize, usize, usize, usize)> for Shape {
-    fn from(v: (usize, usize, usize, usize, usize)) -> Self {
-        Self::D5(v.0, v.1, v.2, v.3, v.4)
-    }
-}
 
 #[derive(Clone)]
 pub struct Tensor {
@@ -91,6 +11,16 @@ pub struct Tensor {
 impl Tensor {
     pub fn shape(&self) -> &Shape {
         &self.shape
+    }
+
+    pub fn dims(&self) -> &[usize] {
+        self.shape.dims()
+    }
+
+    /// The dimension size for a specified dimension index.
+    pub fn dim<D: Dim>(&self, dim: D) -> Result<usize> {
+        let dim = dim.to_index(self.shape(), "dim")?;
+        Ok(self.dims()[dim])
     }
 
     pub fn add(&mut self, src: &Self) -> Result<()> {
@@ -122,8 +52,8 @@ impl Tensor {
     }
 
     pub fn new(data: Vec<f32>, shape: impl Into<Shape>) -> Result<Self> {
-        let shape = shape.into();
-        if shape.num_elems() != data.len() {
+        let shape: Shape = shape.into();
+        if shape.elem_count() != data.len() {
             anyhow::bail!("unexpected shape in new {shape:?} {}", data.len())
         }
         Ok(Self { data, shape })
@@ -131,7 +61,7 @@ impl Tensor {
 
     pub fn cst(data: f32, shape: impl Into<Shape>) -> Result<Self> {
         let shape = shape.into();
-        let data = vec![data; shape.num_elems()];
+        let data = vec![data; shape.elem_count()];
         Ok(Self { data, shape })
     }
 
@@ -156,7 +86,7 @@ impl Tensor {
     // There is no stride so all tensors are always using the C layout
     pub fn reshape(&mut self, s: impl Into<Shape>) -> Result<()> {
         let s = s.into();
-        if s.num_elems() != self.shape.num_elems() {
+        if s.elem_count() != self.shape.elem_count() {
             anyhow::bail!("num-elems mismatch {s:?} {:?}", self.shape)
         }
         self.shape = s;
@@ -164,14 +94,14 @@ impl Tensor {
     }
 
     pub fn matmul(&mut self, lhs: &Self, rhs: &Self, rhs_t: bool) -> Result<()> {
-        let (lhs_b, lhs_m, lhs_k) = match lhs.shape {
-            Shape::D2(a, b) => (1, a, b),
-            Shape::D3(a, b, c) => (a, b, c),
+        let (lhs_b, lhs_m, lhs_k) = match lhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
             _ => anyhow::bail!("unexpected shape for matmul lhs {:?}", &lhs.shape),
         };
-        let (rhs_b, rhs_k, rhs_n) = match rhs.shape {
-            Shape::D2(a, b) => (1, a, b),
-            Shape::D3(a, b, c) => (a, b, c),
+        let (rhs_b, rhs_k, rhs_n) = match rhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
             _ => anyhow::bail!("unexpected shape for matmul rhs {:?}", &rhs.shape),
         };
         let (rhs_k, rhs_n) = if rhs_t { (rhs_n, rhs_k) } else { (rhs_k, rhs_n) };
@@ -191,7 +121,7 @@ impl Tensor {
             )
         }
         let dst_elems = lhs_b * lhs_m * rhs_n;
-        if dst_elems != self.shape.num_elems() {
+        if dst_elems != self.shape.elem_count() {
             anyhow::bail!(
                 "matmul shape mismatch, dst {:?} lhs {:?} rhs {:?}",
                 self.shape(),
@@ -212,8 +142,8 @@ impl Tensor {
         Ok(())
     }
 
-    pub fn num_elems(&self) -> usize {
-        self.shape.num_elems()
+    pub fn elem_count(&self) -> usize {
+        self.shape.elem_count()
     }
 
     pub fn rank(&self) -> usize {
@@ -221,7 +151,7 @@ impl Tensor {
     }
 
     pub fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize) -> Result<()> {
-        if src.num_elems() != self.num_elems() {
+        if src.elem_count() != self.elem_count() {
             anyhow::bail!(
                 "num-elems mismatch in transpose, dst {:?} src {:?}",
                 self.shape(),
@@ -271,32 +201,22 @@ impl Tensor {
     }
 
     pub fn softmax(&mut self, src: &Self) -> Result<()> {
-        if self.shape.num_elems() != src.shape.num_elems() {
+        if self.shape.elem_count() != src.shape.elem_count() {
             anyhow::bail!("shape mismatch in softmax {:?} {:?}", self.shape, src.shape)
         }
         self.shape = src.shape.clone();
-        let dim_m1 = match self.shape {
-            Shape::D0 => 1,
-            Shape::D1(u)
-            | Shape::D2(_, u)
-            | Shape::D3(_, _, u)
-            | Shape::D4(_, _, _, u)
-            | Shape::D5(_, _, _, _, u) => u,
-        };
+        let dim_m1 = self.dim(crate::D::Minus1)?;
         softmax(&mut self.data, &src.data, dim_m1)
     }
 
     pub fn rope(&mut self, cos: &Self, sin: &Self) -> Result<()> {
-        let (b, h, t, d) = match self.shape() {
-            Shape::D4(b, h, t, d) => (*b, *h, *t, *d),
-            s => anyhow::bail!("unexpected shape for rope {s:?}"),
-        };
-        match cos.shape() {
-            Shape::D2(_t, d_over_2) if 2 * d_over_2 == d => {}
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
         };
-        match sin.shape() {
-            Shape::D2(_t, d_over_2) if 2 * d_over_2 == d => {}
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
         rope(&mut self.data, &cos.data, &sin.data, b, h, t, d)
