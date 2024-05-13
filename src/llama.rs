@@ -237,6 +237,7 @@ impl Model {
                 // repeat-kv
                 state.attn_scores.matmul(&state.attn_q_t, &state.attn_k_t, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
+                state.attn_scores.apply_causality_mask()?;
                 // causal mask
                 state.attn_sm.softmax(&state.attn_scores)?;
                 // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
