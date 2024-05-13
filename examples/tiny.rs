@@ -7,5 +7,7 @@ fn main() -> anyhow::Result<()> {
     let mut state = glim::llama::State::new(1, 1, model.config())?;
     model.fwd(&[42], &mut state)?;
     println!("logits: {:?}", &state.logits().data()[..20]);
+    #[cfg(feature = "candle")]
+    println!("{}", state.logits().to_candle()?);
     Ok(())
 }

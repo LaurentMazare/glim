@@ -234,6 +234,18 @@ impl Tensor {
         }
         Ok(())
     }
+
+    #[cfg(feature = "candle")]
+    pub fn to_candle(&self) -> Result<candle::Tensor> {
+        let t = candle::Tensor::from_slice(&self.data, self.dims(), &candle::Device::Cpu)?;
+        Ok(t)
+    }
+
+    #[cfg(feature = "candle")]
+    pub fn from_candle(t: &candle::Tensor) -> Result<Self> {
+        let data = t.flatten_all()?.to_vec1::<f32>()?;
+        Tensor::new(data, t.dims())
+    }
 }
 
 fn matmul(
