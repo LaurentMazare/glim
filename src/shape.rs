@@ -140,54 +140,6 @@ impl Shape {
         self.0.iter().product()
     }
 
-    /// The strides given in number of elements for a contiguous n-dimensional
-    /// arrays using this shape.
-    #[allow(unused)]
-    pub(crate) fn stride_contiguous(&self) -> Vec<usize> {
-        let mut stride: Vec<_> = self
-            .0
-            .iter()
-            .rev()
-            .scan(1, |prod, u| {
-                let prod_pre_mult = *prod;
-                *prod *= u;
-                Some(prod_pre_mult)
-            })
-            .collect();
-        stride.reverse();
-        stride
-    }
-
-    /// Returns true if the strides are C contiguous (aka row major).
-    pub fn is_contiguous(&self, stride: &[usize]) -> bool {
-        if self.0.len() != stride.len() {
-            return false;
-        }
-        let mut acc = 1;
-        for (&stride, &dim) in stride.iter().zip(self.0.iter()).rev() {
-            if dim > 1 && stride != acc {
-                return false;
-            }
-            acc *= dim;
-        }
-        true
-    }
-
-    /// Returns true if the strides are Fortran contiguous (aka column major).
-    pub fn is_fortran_contiguous(&self, stride: &[usize]) -> bool {
-        if self.0.len() != stride.len() {
-            return false;
-        }
-        let mut acc = 1;
-        for (&stride, &dim) in stride.iter().zip(self.0.iter()) {
-            if dim > 1 && stride != acc {
-                return false;
-            }
-            acc *= dim;
-        }
-        true
-    }
-
     /// Modifies the shape by adding a list of additional dimensions at the end of the existing
     /// dimensions.
     pub fn extend(mut self, additional_dims: &[usize]) -> Self {
@@ -555,22 +507,5 @@ impl ShapeWithOneHole for (usize, usize, usize, usize, ()) {
         let (d1, d2, d3, d4, ()) = self;
         let d = hole_size(el_count, d1 * d2 * d3 * d4, &self)?;
         Ok((d1, d2, d3, d4, d).into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stride() {
-        let shape = Shape::from(());
-        assert_eq!(shape.stride_contiguous(), Vec::<usize>::new());
-        let shape = Shape::from(42);
-        assert_eq!(shape.stride_contiguous(), [1]);
-        let shape = Shape::from((42, 1337));
-        assert_eq!(shape.stride_contiguous(), [1337, 1]);
-        let shape = Shape::from((299, 792, 458));
-        assert_eq!(shape.stride_contiguous(), [458 * 792, 458, 1]);
     }
 }
