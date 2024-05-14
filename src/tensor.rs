@@ -251,6 +251,10 @@ impl Tensor {
         Ok(())
     }
 
+    pub fn into_data(self) -> Vec<f32> {
+        self.data
+    }
+
     #[cfg(feature = "candle")]
     pub fn to_candle(&self) -> Result<candle::Tensor> {
         let t = candle::Tensor::from_slice(&self.data, self.dims(), &candle::Device::Cpu)?;

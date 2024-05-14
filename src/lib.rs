@@ -1,3 +1,4 @@
+pub mod kv_cache;
 pub mod llama;
 pub mod shape;
 pub use shape::{Dim, Shape, D};
