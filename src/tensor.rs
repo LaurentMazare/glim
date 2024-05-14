@@ -226,7 +226,7 @@ impl Tensor {
         let (bh, t1, t2) = self.shape().dims3()?;
         for idx_b in 0..bh {
             for idx1 in 0..t1 {
-                for idx2 in t1 + 1..t2 {
+                for idx2 in idx1 + 1..t2 {
                     let idx = idx_b * t1 * t2 + idx1 * t2 + idx2;
                     self.data[idx] = f32::NEG_INFINITY
                 }
