@@ -222,6 +222,19 @@ impl Tensor {
         rope(&mut self.data, &cos.data, &sin.data, b, h, t, d)
     }
 
+    pub fn rope_i(&mut self, cos: &Self, sin: &Self) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        rope_i(&mut self.data, &cos.data, &sin.data, b, h, t, d)
+    }
+
     pub fn apply_causality_mask(&mut self) -> Result<()> {
         let (bh, t1, t2) = self.shape().dims3()?;
         for idx_b in 0..bh {
@@ -326,6 +339,29 @@ fn rope(
         }
     });
 
+    Ok(())
+}
+
+fn rope_i(
+    dst: &mut [f32],
+    cos: &[f32],
+    sin: &[f32],
+    b: usize,
+    h: usize,
+    t: usize,
+    d: usize,
+) -> Result<()> {
+    if dst.len() != b * h * t * d {
+        anyhow::bail!("rope-i unexpected size for dst {} {b} {h} {t} {d}", dst.len())
+    }
+    dst.par_chunks_mut(t * d).for_each(|dst| {
+        for i_over_2 in 0..t * d / 2 {
+            let i = 2 * i_over_2;
+            let (s_i, s_ip) = (dst[i], dst[i + 1]);
+            dst[i] = s_i * cos[i_over_2] - s_ip * sin[i_over_2];
+            dst[i + 1] = s_i * sin[i_over_2] + s_ip * cos[i_over_2];
+        }
+    });
     Ok(())
 }
 

@@ -27,7 +27,7 @@ impl Config {
             vocab_size: 32000,
             seq_len: 256,
             norm_eps: 1e-5,
-            max_seq_len: 4096,
+            max_seq_len: 256,
             rope_theta: 10000.,
         }
     }
@@ -231,12 +231,12 @@ impl Model {
                 layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
 
                 state.attn_q.reshape((b_sz, seq_len, h, d))?;
-                state.attn_q.rope(&state.cos, &state.sin)?;
+                state.attn_q.rope_i(&state.cos, &state.sin)?;
                 state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
                 state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
 
                 state.attn_k.reshape((b_sz, seq_len, h, d))?;
-                state.attn_k.rope(&state.cos, &state.sin)?;
+                state.attn_k.rope_i(&state.cos, &state.sin)?;
                 state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
                 state.attn_k_t.reshape((b_sz * h, seq_len, d))?;
 
