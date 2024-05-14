@@ -135,25 +135,27 @@ pub struct State {
     logits: Tensor,
     cos: Tensor,
     sin: Tensor,
+    b_sz: usize,
+    seq_len: usize,
 }
 
 impl State {
-    pub fn new(b_sz: usize, seqlen: usize, cfg: &Config) -> Result<Self> {
-        let logits = Tensor::cst(0., (b_sz, seqlen, cfg.vocab_size))?;
-        let xs = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let fc1_xs = Tensor::cst(0., (b_sz, seqlen, cfg.hidden_dim))?;
-        let fc2_xs = Tensor::cst(0., (b_sz, seqlen, cfg.hidden_dim))?;
-        let rms_xs = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, cfg.head_dim()))?;
-        let attn_xs_t = Tensor::cst(0., (b_sz, seqlen, cfg.n_heads * cfg.head_dim()))?;
-        let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, seqlen))?;
-        let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seqlen, seqlen))?;
-        let attn_q = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_k = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_v = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_q_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_k_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
-        let attn_v_t = Tensor::cst(0., (b_sz, seqlen, cfg.dim))?;
+    pub fn new(b_sz: usize, seq_len: usize, cfg: &Config) -> Result<Self> {
+        let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
+        let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let fc1_xs = Tensor::cst(0., (b_sz, seq_len, cfg.hidden_dim))?;
+        let fc2_xs = Tensor::cst(0., (b_sz, seq_len, cfg.hidden_dim))?;
+        let rms_xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
+        let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
+        let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, seq_len))?;
+        let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, seq_len))?;
+        let attn_q = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_k = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_v = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_q_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_k_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_v_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
@@ -189,6 +191,8 @@ impl State {
             logits,
             cos,
             sin,
+            b_sz,
+            seq_len,
         })
     }
 
@@ -203,7 +207,13 @@ impl Model {
     }
 
     pub fn fwd(&self, tokens: &[u32], state: &mut State) -> Result<()> {
-        let (b_sz, seqlen) = (1, tokens.len());
+        let (b_sz, seq_len) = (1, tokens.len());
+        if state.b_sz != b_sz {
+            anyhow::bail!("batch size mismatch {} {b_sz}", state.b_sz)
+        }
+        if state.seq_len != seq_len {
+            anyhow::bail!("seq-len mismatch {} {seq_len}", state.seq_len)
+        }
         let h = self.config.n_heads;
         let d = self.config.dim / h;
         for (i, token) in tokens.iter().enumerate() {
@@ -220,19 +230,19 @@ impl Model {
                 layer.attn.k_proj.fwd(&mut state.attn_k, &state.rms_xs)?;
                 layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
 
-                state.attn_q.reshape((b_sz, seqlen, h, d))?;
+                state.attn_q.reshape((b_sz, seq_len, h, d))?;
                 state.attn_q.rope(&state.cos, &state.sin)?;
                 state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
-                state.attn_q_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
 
-                state.attn_k.reshape((b_sz, seqlen, h, d))?;
+                state.attn_k.reshape((b_sz, seq_len, h, d))?;
                 state.attn_k.rope(&state.cos, &state.sin)?;
                 state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
-                state.attn_k_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_k_t.reshape((b_sz * h, seq_len, d))?;
 
-                state.attn_v.reshape((b_sz, seqlen, h, d))?;
+                state.attn_v.reshape((b_sz, seq_len, h, d))?;
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
-                state.attn_v_t.reshape((b_sz * h, seqlen, d))?;
+                state.attn_v_t.reshape((b_sz * h, seq_len, d))?;
                 // kv-cache
                 // repeat-kv
                 state.attn_scores.matmul(&state.attn_q_t, &state.attn_k_t, true)?;
@@ -242,9 +252,9 @@ impl Model {
                 state.attn_sm.softmax(&state.attn_scores)?;
                 // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
                 state.attn_xs.matmul(&state.attn_sm, &state.attn_v_t, false)?;
-                state.attn_xs.reshape((b_sz, h, seqlen, d))?;
+                state.attn_xs.reshape((b_sz, h, seq_len, d))?;
                 state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
-                state.attn_xs_t.reshape((b_sz, seqlen, h * d))?;
+                state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;
                 layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs_t)?;
             }
             state.xs.add(&state.rms_xs)?;
