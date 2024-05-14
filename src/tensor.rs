@@ -197,6 +197,9 @@ impl Tensor {
                 }
             }
         }
+        let mut shape = dims.to_vec();
+        shape.swap(dim1, dim2);
+        self.shape = shape.into();
         Ok(())
     }
 
