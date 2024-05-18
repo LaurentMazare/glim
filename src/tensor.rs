@@ -108,8 +108,8 @@ impl Tensor {
         // Having rhs_b = 1 is ok if dst_b = lhs_b > 1
         if rhs_b != 1 && rhs_b != lhs_b {
             anyhow::bail!(
-                "matmul shape mismatch dst {:?}, rhs {:?} {rhs_t}",
-                self.shape(),
+                "matmul shape mismatch lhs {:?}, rhs {:?} {rhs_t}",
+                lhs.shape(),
                 rhs.shape()
             )
         }
