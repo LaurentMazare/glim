@@ -255,6 +255,30 @@ impl Tensor {
         self.data
     }
 
+    pub fn slice_assign<D: Dim>(&mut self, src: &Self, dim: D, offset: usize) -> Result<()> {
+        let dim = dim.to_index(self.shape(), "slice-set")?;
+        if self.rank() != src.rank() {
+            anyhow::bail!("rank mismatch in slice_assign {} <> {}", self.rank(), src.rank())
+        }
+        for (dim_idx, (v1, v2)) in self.dims().iter().zip(src.dims().iter()).enumerate() {
+            if dim_idx == dim && *v2 + offset > *v1 {
+                anyhow::bail!("shape mismatch on target dim, dst: {v1}, src: {v2} + {offset}")
+            }
+            if dim_idx != dim && v1 != v2 {
+                anyhow::bail!("shape mismatch on dim {dim_idx}, {v1} <> {v2}")
+            }
+        }
+        let block_size: usize = src.dims().iter().skip(1 + dim).product();
+        let d1: usize = src.dims().iter().take(dim).product();
+        let d2 = block_size * src.dims()[dim];
+        let dst_o = offset * block_size;
+        let src_o = 0;
+        let dst_s = block_size * self.dims()[dim];
+        let src_s = d2;
+        copy2d(self.data_mut(), src.data(), d1, d2, dst_s, src_s, dst_o, src_o);
+        Ok(())
+    }
+
     #[cfg(feature = "candle")]
     pub fn to_candle(&self) -> Result<candle::Tensor> {
         let t = candle::Tensor::from_slice(&self.data, self.dims(), &candle::Device::Cpu)?;
@@ -265,6 +289,26 @@ impl Tensor {
     pub fn from_candle(t: &candle::Tensor) -> Result<Self> {
         let data = t.flatten_all()?.to_vec1::<f32>()?;
         Tensor::new(data, t.dims())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy2d(
+    dst: &mut [f32],
+    src: &[f32],
+    d1: usize,
+    d2: usize,
+    dst_s: usize,
+    src_s: usize,
+    dst_o: usize,
+    src_o: usize,
+) {
+    for i1 in 0..d1 {
+        let dst_idx = i1 * dst_s + dst_o;
+        let src_idx = i1 * src_s + src_o;
+        let dst = &mut dst[dst_idx..dst_idx + d2];
+        let src = &src[src_idx..src_idx + d2];
+        dst.copy_from_slice(src)
     }
 }
 
