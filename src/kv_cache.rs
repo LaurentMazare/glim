@@ -1,63 +1,91 @@
-use crate::Tensor;
+use crate::{shape::Dim, Shape, Tensor, TensorView};
 use anyhow::Result;
 
+#[derive(Clone)]
 pub struct Cache {
-    inner: Tensor,
-    seq_len: usize,
-    // TODO: make it a ring buffer + attention sink?
+    all_data: Tensor,
+    dim: usize,
+    current_seq_len: usize,
+    max_seq_len: usize,
 }
 
 impl Cache {
-    pub fn new(b_size: usize, n_head: usize, max_seq_len: usize, head_dim: usize) -> Result<Self> {
-        let inner = Tensor::cst(0., (b_size, n_head, max_seq_len, head_dim))?;
-        Ok(Self { inner, seq_len: 0 })
+    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
+        let shape = shape.into();
+        let dim = dim.to_index(&shape, "kv-cache")?;
+        let max_seq_len = shape.dims()[dim];
+        let all_data = Tensor::cst(0., shape)?;
+        Ok(Self { all_data, dim, current_seq_len: 0, max_seq_len })
+    }
+
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    pub fn current_seq_len(&self) -> usize {
+        self.current_seq_len
+    }
+
+    pub fn max_seq_len(&self) -> usize {
+        self.max_seq_len
+    }
+
+    pub fn all_data(&self) -> &Tensor {
+        &self.all_data
+    }
+
+    pub fn current_data(&self) -> Result<TensorView<'_>> {
+        let view = TensorView::from(&self.all_data);
+        view.narrow(self.dim, 0, Some(self.current_seq_len))
     }
 
     pub fn append(&mut self, src: &Tensor) -> Result<()> {
-        let (b, h, t, d) = self.inner.dims4()?;
-        let (src_b, src_h, src_t, src_d) = src.dims4()?;
-        if b != src_b || h != src_h || src_d != d {
+        let seq_len = src.dim(self.dim)?;
+        if self.current_seq_len + seq_len > self.max_seq_len {
             anyhow::bail!(
-                "unexpected shapes in kv-cache {:?} {:?}",
-                self.inner.shape(),
-                src.shape()
+                "kv-cache: above max-seq-len {}+{seq_len}>{}",
+                self.current_seq_len,
+                self.max_seq_len
             )
         }
-        if src_t + self.seq_len > t {
-            anyhow::bail!(
-                "kv-cache is too short {:?} {:?} {}",
-                self.inner.shape(),
-                src.shape(),
-                self.seq_len
-            )
-        }
-        for idx_b in 0..b {
-            for idx_h in 0..h {
-                let _dst_offest = idx_b * h * t * d + idx_h * t * d + self.seq_len * t;
-                let _src_offest = idx_b * h * src_t * d + idx_h * src_t * d;
-                // TODO: blit src_t * d elements
-            }
-        }
-        self.seq_len += src_t;
+        self.all_data.slice_assign(src, self.dim, self.current_seq_len)?;
+        self.current_seq_len += seq_len;
         Ok(())
     }
 }
 
+#[derive(Clone)]
 pub struct KvCache {
-    k_cache: Cache,
-    v_cache: Cache,
+    k: Cache,
+    v: Cache,
 }
 
 impl KvCache {
-    pub fn new(b_size: usize, n_head: usize, max_seq_len: usize, head_dim: usize) -> Result<Self> {
-        let k_cache = Cache::new(b_size, n_head, max_seq_len, head_dim)?;
-        let v_cache = Cache::new(b_size, n_head, max_seq_len, head_dim)?;
-        Ok(Self { k_cache, v_cache })
+    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
+        let shape = shape.into();
+        let dim = dim.to_index(&shape, "kv-cache")?;
+        let k = Cache::new(dim, &shape)?;
+        let v = Cache::new(dim, &shape)?;
+        Ok(Self { k, v })
     }
 
-    pub fn append(&mut self, k: &Tensor, v: &Tensor) -> Result<()> {
-        self.k_cache.append(k)?;
-        self.v_cache.append(v)?;
-        Ok(())
+    pub fn k(&self) -> Result<TensorView<'_>> {
+        self.k.current_data()
+    }
+
+    pub fn v(&self) -> Result<TensorView<'_>> {
+        self.v.current_data()
+    }
+
+    pub fn append<'a>(
+        &'a mut self,
+        k: &Tensor,
+        v: &Tensor,
+    ) -> Result<(TensorView<'a>, TensorView<'a>)> {
+        self.k.append(k)?;
+        self.v.append(v)?;
+        let k = self.k.current_data()?;
+        let v = self.v.current_data()?;
+        Ok((k, v))
     }
 }
