@@ -117,6 +117,38 @@ macro_rules! extract_dims {
 }
 
 impl Shape {
+    /// The strides given in number of elements for a contiguous n-dimensional
+    /// arrays using this shape.
+    pub(crate) fn stride_contiguous(&self) -> Vec<usize> {
+        let mut stride: Vec<_> = self
+            .0
+            .iter()
+            .rev()
+            .scan(1, |prod, u| {
+                let prod_pre_mult = *prod;
+                *prod *= u;
+                Some(prod_pre_mult)
+            })
+            .collect();
+        stride.reverse();
+        stride
+    }
+
+    /// Returns true if the strides are C contiguous (aka row major).
+    pub fn is_contiguous(&self, stride: &[usize]) -> bool {
+        if self.0.len() != stride.len() {
+            return false;
+        }
+        let mut acc = 1;
+        for (&stride, &dim) in stride.iter().zip(self.0.iter()).rev() {
+            if dim > 1 && stride != acc {
+                return false;
+            }
+            acc *= dim;
+        }
+        true
+    }
+
     pub fn from_dims(dims: &[usize]) -> Self {
         Self(dims.to_vec())
     }
