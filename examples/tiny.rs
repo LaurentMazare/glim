@@ -13,7 +13,8 @@ fn main() -> anyhow::Result<()> {
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
     let model = glim::llama::Model::new(config, "stories15M.safetensors")?;
     let mut state = glim::llama::State::new(1, model.config())?;
-    let mut tokens = vec![42];
+    let start_time = std::time::Instant::now();
+    let mut tokens = vec![1]; // 1 is bos
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
@@ -29,7 +30,13 @@ fn main() -> anyhow::Result<()> {
         //     println!("{}", state.logits().to_candle()?);
         // }
     }
+    let dt = start_time.elapsed();
     let s = tokenizer.decode(&tokens, false).unwrap();
-    println!(">>> {s}");
+    println!("{s}");
+    println!(
+        "generated {} tokens, {:.2} tokens/s",
+        tokens.len() - 1,
+        (tokens.len() - 1) as f64 / dt.as_secs_f64()
+    );
     Ok(())
 }
