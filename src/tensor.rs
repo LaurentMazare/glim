@@ -288,7 +288,7 @@ impl Tensor {
 
     #[cfg(feature = "candle")]
     pub fn to_candle(&self) -> Result<candle::Tensor> {
-        let t = candle::Tensor::from_slice(&self.data, self.dims(), &candle::Device::Cpu)?;
+        let t = candle::Tensor::from_slice(self.data(), self.dims(), &candle::Device::Cpu)?;
         Ok(t)
     }
 
