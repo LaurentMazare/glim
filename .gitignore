@@ -16,3 +16,4 @@ gen.cu
 gen*.json
 *.safetensors
 *.pt
+tokenizer.json
