@@ -1,4 +1,4 @@
-use crate::{Dim, Shape};
+use crate::{Dim, Shape, TensorView};
 use anyhow::Result;
 use rayon::prelude::*;
 
@@ -97,6 +97,89 @@ impl Tensor {
             anyhow::bail!("num-elems mismatch {s:?} {:?}", self.shape)
         }
         self.shape = s;
+        Ok(())
+    }
+
+    // TODO: This should probably be merged with the main matmul method using a trait to dispatch
+    // between TensorView and Tensor for lhs and rhs.
+    pub fn matmul_v(&mut self, lhs: &Self, rhs: &TensorView<'_>, rhs_t: bool) -> Result<()> {
+        let (lhs_b, lhs_m, lhs_k) = match lhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
+            _ => anyhow::bail!("unexpected shape for matmul lhs {:?}", &lhs.shape),
+        };
+        let (rhs_b, rhs_k, rhs_n) = match rhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
+            _ => anyhow::bail!("unexpected shape for matmul rhs {:?}", &rhs.shape()),
+        };
+        let (rhs_k, rhs_n) = if rhs_t { (rhs_n, rhs_k) } else { (rhs_k, rhs_n) };
+        // Having rhs_b = 1 is ok if dst_b = lhs_b > 1
+        if rhs_b != 1 && rhs_b != lhs_b {
+            anyhow::bail!(
+                "matmul shape mismatch lhs {:?}, rhs {:?} {rhs_t}",
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        if rhs_k != lhs_k {
+            anyhow::bail!(
+                "matmul shape mismatch lhs {:?}, rhs {:?} {rhs_t}",
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        let dst_elems = lhs_b * lhs_m * rhs_n;
+        if dst_elems > self.data.len() {
+            anyhow::bail!(
+                "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
+                self.data.len(),
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        let (m, n, k) = (lhs_m, rhs_n, lhs_k);
+        self.shape =
+            if lhs.rank() == 2 && rhs.rank() == 2 { (m, n).into() } else { (lhs_b, m, n).into() };
+        let rhs_data = rhs.data();
+        let b_stride = rhs.strides()[0];
+        let (dst_rs, dst_cs) = (n, 1);
+        let (lhs_rs, lhs_cs) = (k, 1);
+        let (rhs_stride_m2, rhs_stride_m1) = {
+            let l = rhs.strides().len();
+            (rhs.strides()[l - 2], rhs.strides()[l - 1])
+        };
+        let (rhs_rs, rhs_cs) =
+            if rhs_t { (rhs_stride_m1, rhs_stride_m2) } else { (rhs_stride_m2, rhs_stride_m1) };
+
+        for b_idx in 0..lhs_b {
+            let dst = &mut self.data[b_idx * m * n..(b_idx + 1) * m * n];
+            let lhs = &lhs.data[b_idx * m * k..(b_idx + 1) * m * k];
+            let rhs = &rhs_data[b_idx * b_stride..];
+            unsafe {
+                gemm::gemm(
+                    /* m: usize = */ m,
+                    /* n: usize = */ n,
+                    /* k: usize = */ k,
+                    /* dst: *mut T = */ dst.as_mut_ptr(),
+                    /* dst_cs: isize = */ dst_cs as isize,
+                    /* dst_rs: isize = */ dst_rs as isize,
+                    /* read_dst: bool = */ false,
+                    /* lhs: *const T = */ lhs.as_ptr(),
+                    /* lhs_cs: isize = */ lhs_cs as isize,
+                    /* lhs_rs: isize = */ lhs_rs as isize,
+                    /* rhs: *const T = */ rhs.as_ptr(),
+                    /* rhs_cs: isize = */ rhs_cs as isize,
+                    /* rhs_rs: isize = */ rhs_rs as isize,
+                    /* alpha: T = */ 0f32,
+                    /* beta: T = */ 1f32,
+                    /* conj_dst: bool = */ false,
+                    /* conj_lhs: bool = */ false,
+                    /* conj_rhs: bool = */ false,
+                    gemm::Parallelism::Rayon(get_num_threads()),
+                )
+            }
+        }
         Ok(())
     }
 

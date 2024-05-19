@@ -26,6 +26,10 @@ impl<'a> TensorView<'a> {
         self.inner
     }
 
+    pub fn data(&self) -> &[f32] {
+        &self.inner.data()[self.start_offset..]
+    }
+
     pub fn shape(&self) -> &Shape {
         &self.shape
     }
