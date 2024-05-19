@@ -229,6 +229,7 @@ impl Model {
             state.xs.data_mut()[i * h..(i + 1) * h]
                 .copy_from_slice(&self.embedding.data()[token * h..(token + 1) * h]);
         }
+        let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
             {
@@ -239,12 +240,12 @@ impl Model {
 
                 state.attn_q.reshape((b_sz, seq_len, h, d))?;
                 state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
-                state.attn_q_t.rope_i(&state.cos, &state.sin)?;
+                state.attn_q_t.rope_i(&state.cos, &state.sin, pos)?;
                 state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
 
                 state.attn_k.reshape((b_sz, seq_len, h, d))?;
                 state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
-                state.attn_k_t.rope_i(&state.cos, &state.sin)?;
+                state.attn_k_t.rope_i(&state.cos, &state.sin, pos)?;
 
                 state.attn_v.reshape((b_sz, seq_len, h, d))?;
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;

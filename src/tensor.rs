@@ -302,7 +302,7 @@ impl Tensor {
         softmax(self.data_mut(), src.data(), dim_m1)
     }
 
-    pub fn rope(&mut self, cos: &Self, sin: &Self) -> Result<()> {
+    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -312,10 +312,10 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope(self.data_mut(), &cos.data, &sin.data, b, h, t, d)
+        rope(self.data_mut(), &cos.data[pos * d / 2..], &sin.data[pos * d / 2..], b, h, t, d)
     }
 
-    pub fn rope_i(&mut self, cos: &Self, sin: &Self) -> Result<()> {
+    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -325,7 +325,7 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope_i(self.data_mut(), &cos.data, &sin.data, b, h, t, d)
+        rope_i(self.data_mut(), &cos.data[pos * d / 2..], &sin.data[pos * d / 2..], b, h, t, d)
     }
 
     pub fn apply_causality_mask(&mut self) -> Result<()> {

@@ -69,12 +69,12 @@ impl KvCache {
         Ok(Self { k, v })
     }
 
-    pub fn k(&self) -> Result<TensorView<'_>> {
-        self.k.current_data()
+    pub fn k(&self) -> &Cache {
+        &self.k
     }
 
-    pub fn v(&self) -> Result<TensorView<'_>> {
-        self.v.current_data()
+    pub fn v(&self) -> &Cache {
+        &self.v
     }
 
     pub fn append<'a>(
