@@ -81,6 +81,26 @@ impl<'a> TensorView<'a> {
         })
     }
 
+    /// Expand the specified dimension into a list of subdimensions.
+    pub fn expand<D: Dim, S: Into<Shape>>(&self, d: D, s: S) -> Result<Self> {
+        let s = s.into();
+        let d = d.to_index(&self.shape, "expand")?;
+        let dims = self.dims();
+        let strides = self.strides();
+        if dims[d] != s.elem_count() {
+            anyhow::bail!("expand incorrect number of elements in target {s:?} {}", dims[d])
+        }
+        let dst_dims = [&dims[..d], s.dims(), &dims[d + 1..]].concat();
+        let s_strides = s.stride_contiguous();
+        let dst_strides = [&strides[..d], &s_strides, &strides[d + 1..]].concat();
+        Ok(Self {
+            inner: self.inner,
+            shape: dst_dims.into(),
+            strides: dst_strides,
+            start_offset: self.start_offset,
+        })
+    }
+
     pub fn narrow<D: Dim>(&self, dim: D, start: usize, len: Option<usize>) -> Result<Self> {
         let dim = dim.to_index(&self.shape, "narrow")?;
         let mut dims = self.shape.dims().to_vec();
