@@ -136,11 +136,13 @@ pub struct State {
     cos: Tensor,
     sin: Tensor,
     b_sz: usize,
-    seq_len: usize,
+    kv_cache: crate::kv_cache::KvCache,
 }
 
 impl State {
-    pub fn new(b_sz: usize, seq_len: usize, cfg: &Config) -> Result<Self> {
+    pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
+        let seq_len = 1;
+        let max_seq_len = cfg.max_seq_len;
         let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
         let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let fc1_xs = Tensor::cst(0., (b_sz, seq_len, cfg.hidden_dim))?;
@@ -148,8 +150,8 @@ impl State {
         let rms_xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
         let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
-        let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, seq_len))?;
-        let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, seq_len))?;
+        let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
+        let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
         let attn_q = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_k = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_v = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
@@ -162,16 +164,17 @@ impl State {
             .map(|i| 1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32))
             .collect();
         let theta = Tensor::new(theta, (1, head_dim / 2))?;
-        let idx_theta = Tensor::new(
-            (0..cfg.max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
-            (cfg.max_seq_len, 1),
-        )?;
+        let idx_theta =
+            Tensor::new((0..max_seq_len).map(|v| v as f32).collect::<Vec<_>>(), (max_seq_len, 1))?;
         let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count())?;
         mm.matmul(&idx_theta, &theta, false)?;
         let mut cos = mm.clone();
         cos.cos();
         let mut sin = mm.clone();
         sin.sin();
+
+        let kv_cache =
+            crate::kv_cache::KvCache::new(2, (b_sz, cfg.n_heads, max_seq_len, cfg.head_dim()))?;
 
         Ok(Self {
             xs,
@@ -192,7 +195,7 @@ impl State {
             cos,
             sin,
             b_sz,
-            seq_len,
+            kv_cache,
         })
     }
 
@@ -211,8 +214,8 @@ impl Model {
         if state.b_sz != b_sz {
             anyhow::bail!("batch size mismatch {} {b_sz}", state.b_sz)
         }
-        if state.seq_len != seq_len {
-            anyhow::bail!("seq-len mismatch {} {seq_len}", state.seq_len)
+        if seq_len != 1 {
+            anyhow::bail!("seq-len is not one, {seq_len}")
         }
         let h = self.config.n_heads;
         let d = self.config.dim / h;
@@ -238,20 +241,21 @@ impl Model {
                 state.attn_k.reshape((b_sz, seq_len, h, d))?;
                 state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
                 state.attn_k_t.rope_i(&state.cos, &state.sin)?;
-                state.attn_k_t.reshape((b_sz * h, seq_len, d))?;
 
                 state.attn_v.reshape((b_sz, seq_len, h, d))?;
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
-                state.attn_v_t.reshape((b_sz * h, seq_len, d))?;
                 // kv-cache
-                // repeat-kv
-                state.attn_scores.matmul(&state.attn_q_t, &state.attn_k_t, true)?;
+                let (k, v) = state.kv_cache.append(&state.attn_k_t, &state.attn_v_t)?;
+                let k = k.squeeze0_hack();
+                let v = v.squeeze0_hack();
+                // TODO: repeat-kv
+                state.attn_scores.matmul_v(&state.attn_q_t, &k, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
-                state.attn_scores.apply_causality_mask()?;
-                // causal mask
+                // no causal mask, as the sequence length is 1.
+                // state.attn_scores.apply_causality_mask()?;
                 state.attn_sm.softmax(&state.attn_scores)?;
                 // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                state.attn_xs.matmul(&state.attn_sm, &state.attn_v_t, false)?;
+                state.attn_xs.matmul_v(&state.attn_sm, &v, false)?;
                 state.attn_xs.reshape((b_sz, h, seq_len, d))?;
                 state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
                 state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;

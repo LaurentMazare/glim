@@ -50,6 +50,13 @@ impl<'a> TensorView<'a> {
         &self.strides
     }
 
+    // TODO: proper reshape or squeeze.
+    pub fn squeeze0_hack(&self) -> Self {
+        let shape = self.shape.dims()[1..].to_vec().into();
+        let strides = self.strides[1..].to_vec();
+        Self { inner: self.inner, shape, strides, start_offset: self.start_offset }
+    }
+
     pub fn narrow<D: Dim>(&self, dim: D, start: usize, len: Option<usize>) -> Result<Self> {
         let dim = dim.to_index(&self.shape, "narrow")?;
         let mut dims = self.shape.dims().to_vec();
