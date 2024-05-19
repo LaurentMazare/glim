@@ -136,7 +136,7 @@ pub struct State {
     cos: Tensor,
     sin: Tensor,
     b_sz: usize,
-    kv_cache: crate::kv_cache::KvCache,
+    kv_caches: Vec<crate::kv_cache::KvCache>,
 }
 
 impl State {
@@ -173,8 +173,12 @@ impl State {
         let mut sin = mm.clone();
         sin.sin();
 
-        let kv_cache =
-            crate::kv_cache::KvCache::new(2, (b_sz, cfg.n_heads, max_seq_len, cfg.head_dim()))?;
+        let mut kv_caches = Vec::with_capacity(cfg.n_layers);
+        for _layer_idx in 0..cfg.n_layers {
+            let kv_cache =
+                crate::kv_cache::KvCache::new(2, (b_sz, cfg.n_heads, max_seq_len, cfg.head_dim()))?;
+            kv_caches.push(kv_cache)
+        }
 
         Ok(Self {
             xs,
@@ -195,7 +199,7 @@ impl State {
             cos,
             sin,
             b_sz,
-            kv_cache,
+            kv_caches,
         })
     }
 
@@ -225,7 +229,7 @@ impl Model {
             state.xs.data_mut()[i * h..(i + 1) * h]
                 .copy_from_slice(&self.embedding.data()[token * h..(token + 1) * h]);
         }
-        for layer in self.layers.iter() {
+        for (layer_idx, layer) in self.layers.iter().enumerate() {
             layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
             {
                 // Attention
@@ -245,7 +249,7 @@ impl Model {
                 state.attn_v.reshape((b_sz, seq_len, h, d))?;
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
                 // kv-cache
-                let (k, v) = state.kv_cache.append(&state.attn_k_t, &state.attn_v_t)?;
+                let (k, v) = state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
                 let k = k.squeeze0_hack();
                 let v = v.squeeze0_hack();
                 // TODO: repeat-kv
