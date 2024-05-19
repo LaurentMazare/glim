@@ -158,3 +158,39 @@ impl<'a> TensorView<'a> {
         })
     }
 }
+
+pub trait TensorOrView {
+    fn shape(&self) -> &Shape;
+    fn strides(&self) -> std::borrow::Cow<'_, [usize]>;
+    fn data(&self) -> &[f32];
+    fn rank(&self) -> usize {
+        self.shape().rank()
+    }
+    fn dims(&self) -> &[usize] {
+        self.shape().dims()
+    }
+}
+
+impl TensorOrView for Tensor {
+    fn shape(&self) -> &Shape {
+        self.shape()
+    }
+    fn data(&self) -> &[f32] {
+        self.data()
+    }
+    fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
+        std::borrow::Cow::Owned(self.shape().stride_contiguous())
+    }
+}
+
+impl TensorOrView for TensorView<'_> {
+    fn shape(&self) -> &Shape {
+        self.shape()
+    }
+    fn data(&self) -> &[f32] {
+        self.data()
+    }
+    fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
+        std::borrow::Cow::Borrowed(self.strides())
+    }
+}

@@ -254,13 +254,13 @@ impl Model {
                 let k = k.flatten(0, 1)?;
                 let v = v.flatten(0, 1)?;
                 // TODO: repeat-kv
-                state.attn_scores.matmul_v(&state.attn_q_t, &k, true)?;
+                state.attn_scores.matmul(&state.attn_q_t, &k, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                 // no causal mask, as the sequence length is 1.
                 // state.attn_scores.apply_causality_mask()?;
                 state.attn_sm.softmax(&state.attn_scores)?;
                 // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                state.attn_xs.matmul_v(&state.attn_sm, &v, false)?;
+                state.attn_xs.matmul(&state.attn_sm, &v, false)?;
                 state.attn_xs.reshape((b_sz, h, seq_len, d))?;
                 state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
                 state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;

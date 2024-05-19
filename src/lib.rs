@@ -5,4 +5,4 @@ pub use shape::{Dim, Shape, D};
 pub mod tensor;
 pub use tensor::Tensor;
 pub mod tensor_view;
-pub use tensor_view::TensorView;
+pub use tensor_view::{TensorOrView, TensorView};
