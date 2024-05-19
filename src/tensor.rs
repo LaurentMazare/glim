@@ -4,6 +4,7 @@ use rayon::prelude::*;
 
 #[derive(Clone)]
 pub struct Tensor {
+    // [data] can hold more data than what is used in [shape].
     data: Vec<f32>,
     shape: Shape,
 }
@@ -17,6 +18,10 @@ impl Tensor {
         self.shape.dims()
     }
 
+    pub fn capacity(&self) -> usize {
+        self.data.len()
+    }
+
     /// The dimension size for a specified dimension index.
     pub fn dim<D: Dim>(&self, dim: D) -> Result<usize> {
         let dim = dim.to_index(self.shape(), "dim")?;
@@ -27,7 +32,7 @@ impl Tensor {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in add {:?} {:?}", self.shape, src.shape)
         }
-        src.data.iter().zip(self.data.iter_mut()).for_each(|(src, dst)| *dst += *src);
+        src.data().iter().zip(self.data_mut().iter_mut()).for_each(|(src, dst)| *dst += *src);
         Ok(())
     }
 
@@ -35,25 +40,27 @@ impl Tensor {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in mult {:?} {:?}", self.shape, src.shape)
         }
-        src.data.iter().zip(self.data.iter_mut()).for_each(|(src, dst)| *dst *= *src);
+        src.data().iter().zip(self.data_mut().iter_mut()).for_each(|(src, dst)| *dst *= *src);
         Ok(())
     }
 
     pub fn scale(&mut self, m: f32) {
-        self.data.iter_mut().for_each(|v| *v *= m)
+        self.data_mut().iter_mut().for_each(|v| *v *= m)
     }
 
     pub fn data(&self) -> &[f32] {
-        &self.data
+        let elem_count = self.elem_count();
+        &self.data[..elem_count]
     }
 
     pub fn data_mut(&mut self) -> &mut [f32] {
-        &mut self.data
+        let elem_count = self.elem_count();
+        &mut self.data[..elem_count]
     }
 
     pub fn new(data: Vec<f32>, shape: impl Into<Shape>) -> Result<Self> {
         let shape: Shape = shape.into();
-        if shape.elem_count() != data.len() {
+        if shape.elem_count() > data.len() {
             anyhow::bail!("unexpected shape in new {shape:?} {}", data.len())
         }
         Ok(Self { data, shape })
@@ -66,19 +73,19 @@ impl Tensor {
     }
 
     pub fn cos(&mut self) {
-        for d in self.data.iter_mut() {
+        for d in self.data_mut().iter_mut() {
             *d = d.cos();
         }
     }
 
     pub fn sin(&mut self) {
-        for d in self.data.iter_mut() {
+        for d in self.data_mut().iter_mut() {
             *d = d.sin();
         }
     }
 
     pub fn silu(&mut self) {
-        for d in self.data.iter_mut() {
+        for d in self.data_mut().iter_mut() {
             *d /= 1. + f32::exp(-*d)
         }
     }
@@ -121,10 +128,10 @@ impl Tensor {
             )
         }
         let dst_elems = lhs_b * lhs_m * rhs_n;
-        if dst_elems != self.shape.elem_count() {
+        if dst_elems > self.data.len() {
             anyhow::bail!(
-                "matmul shape mismatch, dst {:?} lhs {:?} rhs {:?}",
-                self.shape(),
+                "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
+                self.data.len(),
                 lhs.shape(),
                 rhs.shape()
             )
@@ -204,12 +211,12 @@ impl Tensor {
     }
 
     pub fn softmax(&mut self, src: &Self) -> Result<()> {
-        if self.shape.elem_count() != src.shape.elem_count() {
-            anyhow::bail!("shape mismatch in softmax {:?} {:?}", self.shape, src.shape)
+        if src.shape.elem_count() > self.capacity() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
         }
         self.shape = src.shape.clone();
         let dim_m1 = self.dim(crate::D::Minus1)?;
-        softmax(&mut self.data, &src.data, dim_m1)
+        softmax(self.data_mut(), src.data(), dim_m1)
     }
 
     pub fn rope(&mut self, cos: &Self, sin: &Self) -> Result<()> {
@@ -222,7 +229,7 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope(&mut self.data, &cos.data, &sin.data, b, h, t, d)
+        rope(self.data_mut(), &cos.data, &sin.data, b, h, t, d)
     }
 
     pub fn rope_i(&mut self, cos: &Self, sin: &Self) -> Result<()> {
@@ -235,7 +242,7 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope_i(&mut self.data, &cos.data, &sin.data, b, h, t, d)
+        rope_i(self.data_mut(), &cos.data, &sin.data, b, h, t, d)
     }
 
     pub fn apply_causality_mask(&mut self) -> Result<()> {
