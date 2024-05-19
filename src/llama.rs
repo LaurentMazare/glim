@@ -251,8 +251,8 @@ impl Model {
                 state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
                 // kv-cache
                 let (k, v) = state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
-                let k = k.squeeze0_hack();
-                let v = v.squeeze0_hack();
+                let k = k.flatten(0, 1)?;
+                let v = v.flatten(0, 1)?;
                 // TODO: repeat-kv
                 state.attn_scores.matmul_v(&state.attn_q_t, &k, true)?;
                 state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());

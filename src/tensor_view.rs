@@ -34,6 +34,10 @@ impl<'a> TensorView<'a> {
         &self.shape
     }
 
+    pub fn elem_count(&self) -> usize {
+        self.shape.elem_count()
+    }
+
     pub fn dims(&self) -> &[usize] {
         self.shape.dims()
     }
@@ -50,11 +54,31 @@ impl<'a> TensorView<'a> {
         &self.strides
     }
 
-    // TODO: proper reshape or squeeze.
-    pub fn squeeze0_hack(&self) -> Self {
-        let shape = self.shape.dims()[1..].to_vec().into();
-        let strides = self.strides[1..].to_vec();
-        Self { inner: self.inner, shape, strides, start_offset: self.start_offset }
+    /// Flatten dimensions d1 to d2 (inclusive on both sides).
+    pub fn flatten<D1: Dim, D2: Dim>(&self, d1: D1, d2: D2) -> Result<Self> {
+        let d1 = d1.to_index(&self.shape, "flatten")?;
+        let d2 = d2.to_index(&self.shape, "flatten")?;
+        if d2 < d1 {
+            anyhow::bail!("flatten incorrect dim ordering {d1} {d2}")
+        }
+        let dims = self.dims();
+        let strides = self.strides();
+        for i in d1..d2 {
+            if strides[i + 1] * dims[i + 1] != strides[i] {
+                anyhow::bail!(
+                    "cannot flatten, block is not contiguous {dims:?} {strides:?} {d1} {d2}"
+                )
+            }
+        }
+        let d = dims[d1..d2 + 1].iter().product();
+        let dst_dims = [&dims[..d1], &[d], &dims[d2 + 1..]].concat();
+        let dst_strides = [&strides[..d1], &strides[d2..]].concat();
+        Ok(Self {
+            inner: self.inner,
+            shape: dst_dims.into(),
+            strides: dst_strides,
+            start_offset: self.start_offset,
+        })
     }
 
     pub fn narrow<D: Dim>(&self, dim: D, start: usize, len: Option<usize>) -> Result<Self> {
