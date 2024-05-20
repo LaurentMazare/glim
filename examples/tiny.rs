@@ -1,9 +1,16 @@
 extern crate glim;
+use anyhow::Context;
 
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "candle")]
+    {
+        candle::display::set_line_width(140);
+        candle::display::set_edge_items(6);
+    }
+
     // https://huggingface.co/hf-internal-testing/llama-tokenizer/raw/main/tokenizer.json
     let tokenizer = Tokenizer::from_file("tokenizer.json").unwrap();
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
@@ -14,21 +21,17 @@ fn main() -> anyhow::Result<()> {
     let model = glim::llama::Model::new(config, "stories15M.safetensors")?;
     let mut state = glim::llama::State::new(1, model.config())?;
     let start_time = std::time::Instant::now();
-    let mut tokens = vec![1]; // 1 is bos
+    let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
+    let mut tokens = vec![bos_token];
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
-        // println!("logits: {:?}", &state.logits().data()[..20]);
         prs.softmax(state.logits())?;
         let distr = rand::distributions::WeightedIndex::new(prs.data())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);
         // #[cfg(feature = "candle")]
-        // {
-        //     candle::display::set_line_width(140);
-        //     candle::display::set_edge_items(6);
-        //     println!("{}", state.logits().to_candle()?);
-        // }
+        // println!("{}", state.logits().to_candle()?);
     }
     let dt = start_time.elapsed();
     let s = tokenizer.decode(&tokens, false).unwrap();
