@@ -1,6 +1,7 @@
 use crate::tensor::{rope, rope_i, softmax};
 use crate::{Dim, Shape};
 use anyhow::Result;
+use half::{bf16, f16};
 
 pub enum CowMut<'a, T> {
     Owned(T),
@@ -34,8 +35,16 @@ pub enum DType {
     F32,
 }
 
-pub trait WithDType: Sized + Copy + num_traits::NumAssign {
+pub trait WithDType: Sized + Copy + num_traits::NumAssign + 'static {
     const DTYPE: DType;
+}
+
+impl WithDType for f16 {
+    const DTYPE: DType = DType::F16;
+}
+
+impl WithDType for bf16 {
+    const DTYPE: DType = DType::BF16;
 }
 
 impl WithDType for f32 {
@@ -224,47 +233,6 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
         }
         Ok(())
     }
-}
-
-impl<'a> Tensor<'a, f32> {
-    pub fn softmax(&mut self, src: &Self) -> Result<()> {
-        if src.shape.elem_count() > self.capacity() {
-            anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
-        }
-        self.shape = src.shape.clone();
-        let dim_m1 = self.dim(crate::D::Minus1)?;
-        softmax(self.data_mut(), src.data(), dim_m1)
-    }
-
-    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
-        let (b, h, t, d) = self.shape().dims4()?;
-        match cos.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
-        };
-        match sin.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
-        };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
-    }
-
-    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
-        let (b, h, t, d) = self.shape().dims4()?;
-        match cos.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
-        };
-        match sin.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
-        };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
-    }
 
     // TODO: use a TensorView or a StridedTensor.
     pub fn matmul(&mut self, lhs: &Self, rhs: &Self, rhs_t: bool) -> Result<()> {
@@ -336,8 +304,8 @@ impl<'a> Tensor<'a, f32> {
                     /* rhs: *const T = */ rhs.as_ptr(),
                     /* rhs_cs: isize = */ rhs_cs as isize,
                     /* rhs_rs: isize = */ rhs_rs as isize,
-                    /* alpha: T = */ 0f32,
-                    /* beta: T = */ 1f32,
+                    /* alpha: T = */ T::zero(),
+                    /* beta: T = */ T::one(),
                     /* conj_dst: bool = */ false,
                     /* conj_lhs: bool = */ false,
                     /* conj_rhs: bool = */ false,
@@ -346,6 +314,47 @@ impl<'a> Tensor<'a, f32> {
             }
         }
         Ok(())
+    }
+}
+
+impl<'a> Tensor<'a, f32> {
+    pub fn softmax(&mut self, src: &Self) -> Result<()> {
+        if src.shape.elem_count() > self.capacity() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
+        }
+        self.shape = src.shape.clone();
+        let dim_m1 = self.dim(crate::D::Minus1)?;
+        softmax(self.data_mut(), src.data(), dim_m1)
+    }
+
+    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
+
+    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 }
 
