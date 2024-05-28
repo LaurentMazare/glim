@@ -1,4 +1,5 @@
-use crate::Shape;
+use crate::tensor::{rope, rope_i, softmax};
+use crate::{Dim, Shape};
 use anyhow::Result;
 
 pub enum CowMut<'a, T> {
@@ -59,6 +60,12 @@ impl<'a, T: WithDType> Tensor<'a, T> {
 
     pub fn dims(&self) -> &[usize] {
         self.shape.dims()
+    }
+
+    /// The dimension size for a specified dimension index.
+    pub fn dim<D: Dim>(&self, dim: D) -> Result<usize> {
+        let dim = dim.to_index(self.shape(), "dim")?;
+        Ok(self.dims()[dim])
     }
 
     pub fn capacity(&self) -> usize {
@@ -202,6 +209,143 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
         for d in self.data_mut().iter_mut() {
             *d /= T::one() + (T::zero() - *d).exp()
         }
+    }
+
+    pub fn apply_causality_mask(&mut self) -> Result<()> {
+        let (bh, t1, t2) = self.shape().dims3()?;
+        let dst_data = self.data_mut();
+        for idx_b in 0..bh {
+            for idx1 in 0..t1 {
+                for idx2 in idx1 + 1..t2 {
+                    let idx = idx_b * t1 * t2 + idx1 * t2 + idx2;
+                    dst_data[idx] = T::neg_infinity()
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'a> Tensor<'a, f32> {
+    pub fn softmax(&mut self, src: &Self) -> Result<()> {
+        if src.shape.elem_count() > self.capacity() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
+        }
+        self.shape = src.shape.clone();
+        let dim_m1 = self.dim(crate::D::Minus1)?;
+        softmax(self.data_mut(), src.data(), dim_m1)
+    }
+
+    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
+
+    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
+
+    // TODO: use a TensorView or a StridedTensor.
+    pub fn matmul(&mut self, lhs: &Self, rhs: &Self, rhs_t: bool) -> Result<()> {
+        let (lhs_b, lhs_m, lhs_k) = match lhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
+            _ => anyhow::bail!("unexpected shape for matmul lhs {:?}", &lhs.shape),
+        };
+        let (rhs_b, rhs_k, rhs_n) = match rhs.dims() {
+            [a, b] => (1, *a, *b),
+            [a, b, c] => (*a, *b, *c),
+            _ => anyhow::bail!("unexpected shape for matmul rhs {:?}", &rhs.shape()),
+        };
+        let (rhs_k, rhs_n) = if rhs_t { (rhs_n, rhs_k) } else { (rhs_k, rhs_n) };
+        // Having rhs_b = 1 is ok if dst_b = lhs_b > 1
+        if rhs_b != 1 && rhs_b != lhs_b {
+            anyhow::bail!(
+                "matmul shape mismatch lhs {:?}, rhs {:?} {rhs_t}",
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        if rhs_k != lhs_k {
+            anyhow::bail!(
+                "matmul shape mismatch lhs {:?}, rhs {:?} {rhs_t}",
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        let dst_elems = lhs_b * lhs_m * rhs_n;
+        if dst_elems > self.data.inner.len() {
+            anyhow::bail!(
+                "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
+                self.data.inner.len(),
+                lhs.shape(),
+                rhs.shape()
+            )
+        }
+        let (m, n, k) = (lhs_m, rhs_n, lhs_k);
+        self.shape =
+            if lhs.rank() == 2 && rhs.rank() == 2 { (m, n).into() } else { (lhs_b, m, n).into() };
+        /* let b_stride = rhs.strides()[0]; */
+        let b_stride = k * n;
+        let (dst_rs, dst_cs) = (n, 1);
+        let (lhs_rs, lhs_cs) = (k, 1);
+        let (rhs_stride_m2, rhs_stride_m1) = { (n, 1) };
+        let (rhs_rs, rhs_cs) =
+            if rhs_t { (rhs_stride_m1, rhs_stride_m2) } else { (rhs_stride_m2, rhs_stride_m1) };
+
+        let lhs_data = lhs.data();
+        let rhs_data = rhs.data();
+
+        for b_idx in 0..lhs_b {
+            let dst = &mut self.data.inner[b_idx * m * n..(b_idx + 1) * m * n];
+            let lhs = &lhs_data[b_idx * m * k..(b_idx + 1) * m * k];
+            let rhs = &rhs_data[b_idx * b_stride..];
+            unsafe {
+                gemm::gemm(
+                    /* m: usize = */ m,
+                    /* n: usize = */ n,
+                    /* k: usize = */ k,
+                    /* dst: *mut T = */ dst.as_mut_ptr(),
+                    /* dst_cs: isize = */ dst_cs as isize,
+                    /* dst_rs: isize = */ dst_rs as isize,
+                    /* read_dst: bool = */ false,
+                    /* lhs: *const T = */ lhs.as_ptr(),
+                    /* lhs_cs: isize = */ lhs_cs as isize,
+                    /* lhs_rs: isize = */ lhs_rs as isize,
+                    /* rhs: *const T = */ rhs.as_ptr(),
+                    /* rhs_cs: isize = */ rhs_cs as isize,
+                    /* rhs_rs: isize = */ rhs_rs as isize,
+                    /* alpha: T = */ 0f32,
+                    /* beta: T = */ 1f32,
+                    /* conj_dst: bool = */ false,
+                    /* conj_lhs: bool = */ false,
+                    /* conj_rhs: bool = */ false,
+                    gemm::Parallelism::Rayon(crate::tensor::get_num_threads()),
+                )
+            }
+        }
+        Ok(())
     }
 }
 

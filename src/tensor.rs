@@ -374,7 +374,7 @@ pub(crate) fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()>
     Ok(())
 }
 
-fn rope(
+pub(crate) fn rope(
     dst: &mut [f32],
     cos: &[f32],
     sin: &[f32],
@@ -402,7 +402,7 @@ fn rope(
     Ok(())
 }
 
-fn rope_i(
+pub(crate) fn rope_i(
     dst: &mut [f32],
     cos: &[f32],
     sin: &[f32],
@@ -425,7 +425,7 @@ fn rope_i(
     Ok(())
 }
 
-fn get_num_threads() -> usize {
+pub(crate) fn get_num_threads() -> usize {
     use std::str::FromStr;
     // Respond to the same environment variable as rayon.
     match std::env::var("RAYON_NUM_THREADS").ok().and_then(|s| usize::from_str(&s).ok()) {
