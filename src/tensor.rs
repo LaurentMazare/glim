@@ -357,7 +357,7 @@ fn copy2d(
     }
 }
 
-fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()> {
+pub(crate) fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()> {
     src.par_chunks(dim_m1).zip(dst.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
         let mut max = f32::NEG_INFINITY;
         for &v in src.iter() {
