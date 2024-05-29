@@ -56,10 +56,10 @@ impl Linear {
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a, 'b>(
+    fn fwd<'a>(
         &self,
         dst: &'a mut Storage,
-        src: &tensor::Tensor<'b, f32>,
+        src: &tensor::Tensor<'_, f32>,
     ) -> Result<tensor::Tensor<'a, f32>> {
         // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
         let mut dst = tensor::Tensor::new(dst, 1)?;
