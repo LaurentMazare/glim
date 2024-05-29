@@ -72,7 +72,7 @@ impl Linear {
         dst: &mut tensor::Tensor<'_, f32>,
         src: &tensor::Tensor<'_, f32>,
     ) -> Result<()> {
-        dst.matmul(src, &self.w, true)
+        dst.matmul_(src, &self.w, true)
     }
 }
 
@@ -161,8 +161,8 @@ pub struct State {
     attn_k_t: Storage,
     attn_v_t: Storage,
     attn_sm: Storage,
-    attn_scores: Tensor,
-    attn_xs: Tensor,
+    attn_scores: Storage,
+    attn_xs: Storage,
     attn_xs_t: Storage,
     logits: Tensor,
     cos: Tensor,
@@ -180,9 +180,9 @@ impl State {
         let fc1_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
         let fc2_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
         let rms_xs = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
+        let attn_xs = Storage::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
         let attn_xs_t = Storage::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
-        let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
+        let attn_scores = Storage::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
         let attn_sm = Storage::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
         let attn_q = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_k = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
@@ -201,7 +201,7 @@ impl State {
             (max_seq_len, 1),
         )?;
         let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count())?;
-        mm.matmul(&idx_theta, &theta, false)?;
+        mm.matmul_(&idx_theta, &theta, false)?;
         let mut cos = mm.copy()?;
         cos.cos();
         let mut sin = mm.copy()?;
@@ -289,15 +289,16 @@ impl Model {
                     let k = k.flatten(0, 1)?;
                     let v = v.flatten(0, 1)?;
                     // TODO: repeat-kv
-                    state.attn_scores.matmul(&attn_q, &k, true)?;
-                    state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
+                    let mut attn_scores =
+                        tensor::matmul(&mut state.attn_scores, &attn_q, &k, true)?;
+                    attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
-                    let attn_sm = state.attn_scores.softmax(&mut state.attn_sm)?;
+                    let attn_sm = attn_scores.softmax(&mut state.attn_sm)?;
                     // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                    state.attn_xs.matmul(&attn_sm, &v, false)?;
-                    state.attn_xs.reshape((b_sz, h, seq_len, d))?;
-                    let mut attn_xs = state.attn_xs.transpose(&mut state.attn_xs_t, 1, 2)?;
+                    let mut attn_xs = tensor::matmul(&mut state.attn_xs, &attn_sm, &v, false)?;
+                    attn_xs.reshape((b_sz, h, seq_len, d))?;
+                    let mut attn_xs = attn_xs.transpose(&mut state.attn_xs_t, 1, 2)?;
                     attn_xs.reshape((b_sz, seq_len, h * d))?;
                     attn_xs
                 };

@@ -252,7 +252,7 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn matmul<V1: crate::TensorOrView<Elem = T>, V2: crate::TensorOrView<Elem = T>>(
+    pub fn matmul_<V1: crate::TensorOrView<Elem = T>, V2: crate::TensorOrView<Elem = T>>(
         &mut self,
         lhs: &V1,
         rhs: &V2,
@@ -345,6 +345,23 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
         }
         Ok(())
     }
+}
+
+pub fn matmul<
+    'a,
+    T: WithDType + num_traits::Float,
+    V1: crate::TensorOrView<Elem = T>,
+    V2: crate::TensorOrView<Elem = T>,
+>(
+    dst: &'a mut Storage<T>,
+    lhs: &V1,
+    rhs: &V2,
+    rhs_t: bool,
+) -> Result<Tensor<'a, T>> {
+    // TODO: Use the proper shape here rather than relying on matmul to do the reshape?
+    let mut dst = Tensor::new(dst, 1)?;
+    dst.matmul_(lhs, rhs, rhs_t)?;
+    Ok(dst)
 }
 
 impl<'a> Tensor<'a, f32> {
