@@ -7,7 +7,7 @@ pub enum DType {
     F32,
 }
 
-pub trait WithDType: Sized + Copy + num_traits::NumAssign + 'static + Clone {
+pub trait WithDType: Sized + Copy + num_traits::NumAssign + 'static + Clone + Send + Sync {
     const DTYPE: DType;
 }
 

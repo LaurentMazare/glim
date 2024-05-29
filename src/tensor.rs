@@ -183,6 +183,36 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         };
         Ok(Tensor { data: CowMut::Owned(storage), shape: self.shape.clone() })
     }
+
+    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
+
+    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+        let (b, h, t, d) = self.shape().dims4()?;
+        match cos.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
+        };
+        match sin.dims() {
+            [_t, d_over_2] if 2 * d_over_2 == d => {}
+            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
+        };
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
 }
 
 impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
@@ -322,36 +352,6 @@ impl<'a> Tensor<'a, f32> {
         let dim_m1 = self.dim(crate::D::Minus1)?;
         softmax(self.data_mut(), src.data(), dim_m1)
     }
-
-    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
-        let (b, h, t, d) = self.shape().dims4()?;
-        match cos.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
-        };
-        match sin.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
-        };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
-    }
-
-    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
-        let (b, h, t, d) = self.shape().dims4()?;
-        match cos.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-cos {s:?} (head-dim {d})"),
-        };
-        match sin.dims() {
-            [_t, d_over_2] if 2 * d_over_2 == d => {}
-            s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
-        };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
-    }
 }
 
 impl<T: WithDType> Tensor<'static, T> {
@@ -392,27 +392,31 @@ pub(crate) fn copy2d<T: Copy>(
     }
 }
 
-pub(crate) fn softmax(dst: &mut [f32], src: &[f32], dim_m1: usize) -> Result<()> {
+pub(crate) fn softmax<T: WithDType + num_traits::Float + Into<f32> + From<f32>>(
+    dst: &mut [T],
+    src: &[T],
+    dim_m1: usize,
+) -> Result<()> {
     src.par_chunks(dim_m1).zip(dst.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
-        let mut max = f32::NEG_INFINITY;
+        let mut max = T::neg_infinity();
         for &v in src.iter() {
-            max = f32::max(v, max)
+            max = T::max(v, max)
         }
         for (s, d) in src.iter().zip(dst.iter_mut()) {
             *d = (*s - max).exp();
         }
-        let sum_exp = dst.iter().sum::<f32>();
+        let sum_exp = dst.iter().map(|v| <T as Into<f32>>::into(*v)).sum::<f32>();
         for d in dst.iter_mut() {
-            *d /= sum_exp
+            *d = <T as From<f32>>::from(<T as Into<f32>>::into(*d) / sum_exp)
         }
     });
     Ok(())
 }
 
-pub(crate) fn rope(
-    dst: &mut [f32],
-    cos: &[f32],
-    sin: &[f32],
+pub(crate) fn rope<T: WithDType>(
+    dst: &mut [T],
+    cos: &[T],
+    sin: &[T],
     b: usize,
     h: usize,
     t: usize,
@@ -437,10 +441,10 @@ pub(crate) fn rope(
     Ok(())
 }
 
-pub(crate) fn rope_i(
-    dst: &mut [f32],
-    cos: &[f32],
-    sin: &[f32],
+pub(crate) fn rope_i<T: WithDType>(
+    dst: &mut [T],
+    cos: &[T],
+    sin: &[T],
     b: usize,
     h: usize,
     t: usize,
