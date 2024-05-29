@@ -160,7 +160,7 @@ pub struct State {
     attn_q_t: Storage,
     attn_k_t: Storage,
     attn_v_t: Storage,
-    attn_sm: Tensor,
+    attn_sm: Storage,
     attn_scores: Tensor,
     attn_xs: Tensor,
     attn_xs_t: Storage,
@@ -183,7 +183,7 @@ impl State {
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
         let attn_xs_t = Storage::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
         let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
-        let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
+        let attn_sm = Storage::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
         let attn_q = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_k = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_v = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
@@ -293,18 +293,16 @@ impl Model {
                     state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
-                    state.attn_sm.softmax(&state.attn_scores)?;
+                    let attn_sm = state.attn_scores.softmax(&mut state.attn_sm)?;
                     // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                    state.attn_xs.matmul(&state.attn_sm, &v, false)?;
+                    state.attn_xs.matmul(&attn_sm, &v, false)?;
                     state.attn_xs.reshape((b_sz, h, seq_len, d))?;
                     let mut attn_xs = state.attn_xs.transpose(&mut state.attn_xs_t, 1, 2)?;
                     attn_xs.reshape((b_sz, seq_len, h * d))?;
                     attn_xs
                 };
-                {
-                    let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
-                    state.xs.add(&o)?;
-                }
+                let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
+                state.xs.add(&o)?;
             }
 
             {

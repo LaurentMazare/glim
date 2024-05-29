@@ -348,13 +348,14 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
 }
 
 impl<'a> Tensor<'a, f32> {
-    pub fn softmax(&mut self, src: &Tensor<'_, f32>) -> Result<()> {
-        if src.shape.elem_count() > self.capacity() {
-            anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
+    pub fn softmax<'b>(&self, dst: &'b mut Storage<f32>) -> Result<Tensor<'b, f32>> {
+        if self.shape.elem_count() > dst.inner.len() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", dst.inner.len(), self.shape)
         }
-        self.shape = src.shape.clone();
         let dim_m1 = self.dim(crate::D::Minus1)?;
-        softmax(self.data_mut(), src.data(), dim_m1)
+        let shape = self.shape.clone();
+        softmax(&mut dst.inner, self.data(), dim_m1)?;
+        Ok(Tensor { data: CowMut::Borrowed(dst), shape })
     }
 }
 
