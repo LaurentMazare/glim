@@ -101,7 +101,7 @@ macro_rules! extract_dims {
             }
         }
 
-        impl crate::Tensor {
+        impl<T: crate::WithDType> crate::Tensor<'_, T> {
             pub fn $fn_name(&self) -> Result<$out_type> {
                 self.shape().$fn_name()
             }

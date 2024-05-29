@@ -1,15 +1,15 @@
-use crate::{Dim, Shape};
+use crate::storage::{CowMut, Storage};
+use crate::{Dim, Shape, WithDType};
 use anyhow::Result;
 use rayon::prelude::*;
 
-#[derive(Clone)]
-pub struct Tensor {
-    // [data] can hold more data than what is used in [shape].
-    data: Vec<f32>,
+// TODO: separate type for StridedTensor? (cannot be owned)
+pub struct Tensor<'a, T: WithDType> {
+    data: CowMut<'a, Storage<T>>,
     shape: Shape,
 }
 
-impl Tensor {
+impl<'a, T: WithDType> Tensor<'a, T> {
     pub fn shape(&self) -> &Shape {
         &self.shape
     }
@@ -18,14 +18,42 @@ impl Tensor {
         self.shape.dims()
     }
 
-    pub fn capacity(&self) -> usize {
-        self.data.len()
-    }
-
     /// The dimension size for a specified dimension index.
     pub fn dim<D: Dim>(&self, dim: D) -> Result<usize> {
         let dim = dim.to_index(self.shape(), "dim")?;
         Ok(self.dims()[dim])
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.data.inner.len()
+    }
+
+    pub fn elem_count(&self) -> usize {
+        self.shape.elem_count()
+    }
+
+    pub fn rank(&self) -> usize {
+        self.shape.rank()
+    }
+
+    pub fn new<S: Into<Shape>>(data: &'a mut Storage<T>, shape: S) -> Result<Self> {
+        let shape = shape.into();
+        if data.inner.len() < shape.elem_count() {
+            anyhow::bail!("not enough elements in storage {} for shape {shape:?}", data.inner.len())
+        }
+        Ok(Self { data: CowMut::Borrowed(data), shape })
+    }
+
+    pub fn into_storage(self) -> CowMut<'a, Storage<T>> {
+        self.data
+    }
+
+    pub fn zeros(&mut self) {
+        self.data.inner.fill(T::zero())
+    }
+
+    pub fn scale(&mut self, m: T) {
+        self.data_mut().iter_mut().for_each(|v| *v *= m)
     }
 
     pub fn add(&mut self, src: &Self) -> Result<()> {
@@ -44,34 +72,120 @@ impl Tensor {
         Ok(())
     }
 
-    pub fn scale(&mut self, m: f32) {
-        self.data_mut().iter_mut().for_each(|v| *v *= m)
-    }
-
-    pub fn data(&self) -> &[f32] {
+    pub fn data(&self) -> &[T] {
         let elem_count = self.elem_count();
-        &self.data[..elem_count]
+        &self.data.inner[..elem_count]
     }
 
-    pub fn data_mut(&mut self) -> &mut [f32] {
+    pub fn data_mut(&mut self) -> &mut [T] {
         let elem_count = self.elem_count();
-        &mut self.data[..elem_count]
+        &mut self.data.inner[..elem_count]
     }
 
-    pub fn new(data: Vec<f32>, shape: impl Into<Shape>) -> Result<Self> {
-        let shape: Shape = shape.into();
-        if shape.elem_count() > data.len() {
-            anyhow::bail!("unexpected shape in new {shape:?} {}", data.len())
+    // There is no stride so all tensors are always using the C layout
+    pub fn reshape(&mut self, s: impl Into<Shape>) -> Result<()> {
+        let s = s.into();
+        if s.elem_count() != self.shape.elem_count() {
+            anyhow::bail!("num-elems mismatch {s:?} {:?}", self.shape)
         }
-        Ok(Self { data, shape })
+        self.shape = s;
+        Ok(())
     }
 
-    pub fn cst(data: f32, shape: impl Into<Shape>) -> Result<Self> {
-        let shape = shape.into();
-        let data = vec![data; shape.elem_count()];
-        Ok(Self { data, shape })
+    pub fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize) -> Result<()> {
+        if src.elem_count() != self.elem_count() {
+            anyhow::bail!(
+                "num-elems mismatch in transpose, dst {:?} src {:?}",
+                self.shape(),
+                src.shape()
+            )
+        }
+        if dim1 >= src.rank() || dim2 >= src.rank() {
+            anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
+        }
+        if dim1 == dim2 {
+            self.data_mut().copy_from_slice(src.data());
+            return Ok(());
+        }
+        let dst_data = self.data_mut();
+        let src_data = src.data();
+        let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
+        let dims = src.shape().dims();
+        let d_i = dims[..dim1].iter().product::<usize>();
+        let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
+        let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
+        let d1 = dims[dim1];
+        let d2 = dims[dim2];
+        // Inefficient, we should blit the data where possible.
+        // i: pre
+        for i in 0..d_i {
+            for a1 in 0..d1 {
+                // j: mid
+                for j in 0..d_j {
+                    for a2 in 0..d2 {
+                        // k: post
+                        for k in 0..d_k {
+                            let src_idx = i * d1 * d_j * d2 * d_k
+                                + a1 * d_j * d2 * d_k
+                                + j * d2 * d_k
+                                + a2 * d_k
+                                + k;
+                            let dst_idx = i * d2 * d_j * d1 * d_k
+                                + a2 * d_j * d1 * d_k
+                                + j * d1 * d_k
+                                + a1 * d_k
+                                + k;
+                            dst_data[dst_idx] = src_data[src_idx]
+                        }
+                    }
+                }
+            }
+        }
+        let mut shape = dims.to_vec();
+        shape.swap(dim1, dim2);
+        self.shape = shape.into();
+        Ok(())
     }
 
+    pub fn slice_assign<D: Dim>(
+        &mut self,
+        src: &Tensor<'_, T>,
+        dim: D,
+        offset: usize,
+    ) -> Result<()> {
+        let dim = dim.to_index(self.shape(), "slice-set")?;
+        if self.rank() != src.rank() {
+            anyhow::bail!("rank mismatch in slice_assign {} <> {}", self.rank(), src.rank())
+        }
+        for (dim_idx, (v1, v2)) in self.dims().iter().zip(src.dims().iter()).enumerate() {
+            if dim_idx == dim && *v2 + offset > *v1 {
+                anyhow::bail!("shape mismatch on target dim, dst: {v1}, src: {v2} + {offset}")
+            }
+            if dim_idx != dim && v1 != v2 {
+                anyhow::bail!("shape mismatch on dim {dim_idx}, {v1} <> {v2}")
+            }
+        }
+        let block_size: usize = src.dims().iter().skip(1 + dim).product();
+        let d1: usize = src.dims().iter().take(dim).product();
+        let d2 = block_size * src.dims()[dim];
+        let dst_o = offset * block_size;
+        let src_o = 0;
+        let dst_s = block_size * self.dims()[dim];
+        let src_s = d2;
+        copy2d(self.data_mut(), src.data(), d1, d2, dst_s, src_s, dst_o, src_o);
+        Ok(())
+    }
+
+    pub fn copy(&self) -> Result<Tensor<'static, T>> {
+        let storage = match &self.data {
+            CowMut::Owned(v) => v.clone(),
+            CowMut::Borrowed(v) => Storage::clone(v),
+        };
+        Ok(Tensor { data: CowMut::Owned(storage), shape: self.shape.clone() })
+    }
+}
+
+impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
     pub fn cos(&mut self) {
         for d in self.data_mut().iter_mut() {
             *d = d.cos();
@@ -86,25 +200,29 @@ impl Tensor {
 
     pub fn silu(&mut self) {
         for d in self.data_mut().iter_mut() {
-            *d /= 1. + f32::exp(-*d)
+            *d /= T::one() + (T::zero() - *d).exp()
         }
     }
 
-    // There is no stride so all tensors are always using the C layout
-    pub fn reshape(&mut self, s: impl Into<Shape>) -> Result<()> {
-        let s = s.into();
-        if s.elem_count() != self.shape.elem_count() {
-            anyhow::bail!("num-elems mismatch {s:?} {:?}", self.shape)
+    pub fn apply_causality_mask(&mut self) -> Result<()> {
+        let (bh, t1, t2) = self.shape().dims3()?;
+        let dst_data = self.data_mut();
+        for idx_b in 0..bh {
+            for idx1 in 0..t1 {
+                for idx2 in idx1 + 1..t2 {
+                    let idx = idx_b * t1 * t2 + idx1 * t2 + idx2;
+                    dst_data[idx] = T::neg_infinity()
+                }
+            }
         }
-        self.shape = s;
         Ok(())
     }
 
-    // TODO: Also use a TensorOrView for lhs?
-    pub fn matmul<T: crate::TensorOrView>(
+    // TODO: use a TensorView or a StridedTensor.
+    pub fn matmul<V: crate::TensorOrView<Elem = T>>(
         &mut self,
-        lhs: &Self,
-        rhs: &T,
+        lhs: &Tensor<'_, T>,
+        rhs: &V,
         rhs_t: bool,
     ) -> Result<()> {
         let (lhs_b, lhs_m, lhs_k) = match lhs.dims() {
@@ -134,10 +252,10 @@ impl Tensor {
             )
         }
         let dst_elems = lhs_b * lhs_m * rhs_n;
-        if dst_elems > self.data.len() {
+        if dst_elems > self.data.inner.len() {
             anyhow::bail!(
                 "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
-                self.data.len(),
+                self.data.inner.len(),
                 lhs.shape(),
                 rhs.shape()
             )
@@ -145,7 +263,6 @@ impl Tensor {
         let (m, n, k) = (lhs_m, rhs_n, lhs_k);
         self.shape =
             if lhs.rank() == 2 && rhs.rank() == 2 { (m, n).into() } else { (lhs_b, m, n).into() };
-        let rhs_data = rhs.data();
         let b_stride = rhs.strides()[0];
         let (dst_rs, dst_cs) = (n, 1);
         let (lhs_rs, lhs_cs) = (k, 1);
@@ -153,12 +270,16 @@ impl Tensor {
             let l = rhs.strides().len();
             (rhs.strides()[l - 2], rhs.strides()[l - 1])
         };
+
         let (rhs_rs, rhs_cs) =
             if rhs_t { (rhs_stride_m1, rhs_stride_m2) } else { (rhs_stride_m2, rhs_stride_m1) };
 
+        let lhs_data = lhs.data();
+        let rhs_data = rhs.data();
+
         for b_idx in 0..lhs_b {
-            let dst = &mut self.data[b_idx * m * n..(b_idx + 1) * m * n];
-            let lhs = &lhs.data[b_idx * m * k..(b_idx + 1) * m * k];
+            let dst = &mut self.data.inner[b_idx * m * n..(b_idx + 1) * m * n];
+            let lhs = &lhs_data[b_idx * m * k..(b_idx + 1) * m * k];
             let rhs = &rhs_data[b_idx * b_stride..];
             unsafe {
                 gemm::gemm(
@@ -175,79 +296,20 @@ impl Tensor {
                     /* rhs: *const T = */ rhs.as_ptr(),
                     /* rhs_cs: isize = */ rhs_cs as isize,
                     /* rhs_rs: isize = */ rhs_rs as isize,
-                    /* alpha: T = */ 0f32,
-                    /* beta: T = */ 1f32,
+                    /* alpha: T = */ T::zero(),
+                    /* beta: T = */ T::one(),
                     /* conj_dst: bool = */ false,
                     /* conj_lhs: bool = */ false,
                     /* conj_rhs: bool = */ false,
-                    gemm::Parallelism::Rayon(get_num_threads()),
+                    gemm::Parallelism::Rayon(crate::tensor::get_num_threads()),
                 )
             }
         }
         Ok(())
     }
+}
 
-    pub fn elem_count(&self) -> usize {
-        self.shape.elem_count()
-    }
-
-    pub fn rank(&self) -> usize {
-        self.shape.rank()
-    }
-
-    pub fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize) -> Result<()> {
-        if src.elem_count() != self.elem_count() {
-            anyhow::bail!(
-                "num-elems mismatch in transpose, dst {:?} src {:?}",
-                self.shape(),
-                src.shape()
-            )
-        }
-        if dim1 >= src.rank() || dim2 >= src.rank() {
-            anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
-        }
-        if dim1 == dim2 {
-            self.data.copy_from_slice(&src.data);
-            return Ok(());
-        }
-        let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
-        let dims = src.shape().dims();
-        let d_i = dims[..dim1].iter().product::<usize>();
-        let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
-        let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
-        let d1 = dims[dim1];
-        let d2 = dims[dim2];
-        // Inefficient, we should blit the data where possible.
-        // i: pre
-        for i in 0..d_i {
-            for a1 in 0..d1 {
-                // j: mid
-                for j in 0..d_j {
-                    for a2 in 0..d2 {
-                        // k: post
-                        for k in 0..d_k {
-                            let src_idx = i * d1 * d_j * d2 * d_k
-                                + a1 * d_j * d2 * d_k
-                                + j * d2 * d_k
-                                + a2 * d_k
-                                + k;
-                            let dst_idx = i * d2 * d_j * d1 * d_k
-                                + a2 * d_j * d1 * d_k
-                                + j * d1 * d_k
-                                + a1 * d_k
-                                + k;
-                            self.data[dst_idx] = src.data[src_idx]
-                        }
-                    }
-                }
-            }
-        }
-        let mut shape = dims.to_vec();
-        shape.swap(dim1, dim2);
-        self.shape = shape.into();
-        Ok(())
-    }
-
+impl<'a> Tensor<'a, f32> {
     pub fn softmax(&mut self, src: &Self) -> Result<()> {
         if src.shape.elem_count() > self.capacity() {
             anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
@@ -267,7 +329,9 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope(self.data_mut(), &cos.data[pos * d / 2..], &sin.data[pos * d / 2..], b, h, t, d)
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 
     pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
@@ -280,60 +344,27 @@ impl Tensor {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        rope_i(self.data_mut(), &cos.data[pos * d / 2..], &sin.data[pos * d / 2..], b, h, t, d)
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+    }
+}
+
+impl<T: WithDType> Tensor<'static, T> {
+    // Create a tensor with an owned storage.
+    pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
+        let shape = shape.into();
+        let data = Storage { inner: vec![t; shape.elem_count()] };
+        Ok(Self { data: CowMut::Owned(data), shape })
     }
 
-    pub fn apply_causality_mask(&mut self) -> Result<()> {
-        let (bh, t1, t2) = self.shape().dims3()?;
-        for idx_b in 0..bh {
-            for idx1 in 0..t1 {
-                for idx2 in idx1 + 1..t2 {
-                    let idx = idx_b * t1 * t2 + idx1 * t2 + idx2;
-                    self.data[idx] = f32::NEG_INFINITY
-                }
-            }
+    pub fn owned<S: Into<Shape>>(data: Vec<T>, shape: S) -> Result<Self> {
+        let shape = shape.into();
+        if shape.elem_count() > data.len() {
+            anyhow::bail!("not enough elements in input vector {} for shape {shape:?}", data.len())
         }
-        Ok(())
-    }
-
-    pub fn into_data(self) -> Vec<f32> {
-        self.data
-    }
-
-    pub fn slice_assign<D: Dim>(&mut self, src: &Self, dim: D, offset: usize) -> Result<()> {
-        let dim = dim.to_index(self.shape(), "slice-set")?;
-        if self.rank() != src.rank() {
-            anyhow::bail!("rank mismatch in slice_assign {} <> {}", self.rank(), src.rank())
-        }
-        for (dim_idx, (v1, v2)) in self.dims().iter().zip(src.dims().iter()).enumerate() {
-            if dim_idx == dim && *v2 + offset > *v1 {
-                anyhow::bail!("shape mismatch on target dim, dst: {v1}, src: {v2} + {offset}")
-            }
-            if dim_idx != dim && v1 != v2 {
-                anyhow::bail!("shape mismatch on dim {dim_idx}, {v1} <> {v2}")
-            }
-        }
-        let block_size: usize = src.dims().iter().skip(1 + dim).product();
-        let d1: usize = src.dims().iter().take(dim).product();
-        let d2 = block_size * src.dims()[dim];
-        let dst_o = offset * block_size;
-        let src_o = 0;
-        let dst_s = block_size * self.dims()[dim];
-        let src_s = d2;
-        copy2d(self.data_mut(), src.data(), d1, d2, dst_s, src_s, dst_o, src_o);
-        Ok(())
-    }
-
-    #[cfg(feature = "candle")]
-    pub fn to_candle(&self) -> Result<candle::Tensor> {
-        let t = candle::Tensor::from_slice(self.data(), self.dims(), &candle::Device::Cpu)?;
-        Ok(t)
-    }
-
-    #[cfg(feature = "candle")]
-    pub fn from_candle(t: &candle::Tensor) -> Result<Self> {
-        let data = t.flatten_all()?.to_vec1::<f32>()?;
-        Tensor::new(data, t.dims())
+        let data = Storage { inner: data };
+        Ok(Self { data: CowMut::Owned(data), shape })
     }
 }
 

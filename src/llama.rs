@@ -1,6 +1,8 @@
-use crate::{Shape, Tensor};
+use crate::Shape;
 use anyhow::Result;
 use rayon::prelude::*;
+
+type Tensor = crate::Tensor<'static, f32>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -136,7 +138,7 @@ pub struct State {
     cos: Tensor,
     sin: Tensor,
     b_sz: usize,
-    kv_caches: Vec<crate::kv_cache::KvCache>,
+    kv_caches: Vec<crate::kv_cache::KvCache<'static, f32>>,
 }
 
 impl State {
@@ -163,14 +165,16 @@ impl State {
             .step_by(2)
             .map(|i| 1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32))
             .collect();
-        let theta = Tensor::new(theta, (1, head_dim / 2))?;
-        let idx_theta =
-            Tensor::new((0..max_seq_len).map(|v| v as f32).collect::<Vec<_>>(), (max_seq_len, 1))?;
+        let theta = Tensor::owned(theta, (1, head_dim / 2))?;
+        let idx_theta = Tensor::owned(
+            (0..max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
+            (max_seq_len, 1),
+        )?;
         let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count())?;
         mm.matmul(&idx_theta, &theta, false)?;
-        let mut cos = mm.clone();
+        let mut cos = mm.copy()?;
         cos.cos();
-        let mut sin = mm.clone();
+        let mut sin = mm.copy()?;
         sin.sin();
 
         let mut kv_caches = Vec::with_capacity(cfg.n_layers);
@@ -296,7 +300,7 @@ impl Model {
                 &mut data,
                 &mut f32_data,
             )?;
-            let data = Tensor::new(f32_data, shape)?;
+            let data = Tensor::owned(f32_data, shape)?;
             Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;

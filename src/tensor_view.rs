@@ -1,32 +1,32 @@
-use crate::{shape::Dim, Shape, Tensor};
+use crate::{shape::Dim, Shape, Tensor, WithDType};
 use anyhow::Result;
 
 #[derive(Clone)]
-pub struct TensorView<'a> {
-    inner: &'a Tensor,
+pub struct TensorView<'a, T: WithDType> {
+    inner: &'a Tensor<'a, T>,
     shape: Shape,
     strides: Vec<usize>,
     start_offset: usize,
 }
 
-impl<'a> From<&'a Tensor> for TensorView<'a> {
-    fn from(inner: &'a Tensor) -> Self {
+impl<'a, T: WithDType> From<&'a Tensor<'a, T>> for TensorView<'a, T> {
+    fn from(inner: &'a Tensor<'a, T>) -> Self {
         let shape = inner.shape().clone();
         let strides = shape.stride_contiguous();
         Self { inner, shape, strides, start_offset: 0 }
     }
 }
 
-impl<'a> TensorView<'a> {
+impl<'a, T: WithDType> TensorView<'a, T> {
     pub fn start_offset(&self) -> usize {
         self.start_offset
     }
 
-    pub fn inner(&self) -> &Tensor {
+    pub fn inner(&self) -> &Tensor<'a, T> {
         self.inner
     }
 
-    pub fn data(&self) -> &[f32] {
+    pub fn data(&self) -> &[T] {
         &self.inner.data()[self.start_offset..]
     }
 
@@ -160,9 +160,11 @@ impl<'a> TensorView<'a> {
 }
 
 pub trait TensorOrView {
+    type Elem;
+
     fn shape(&self) -> &Shape;
     fn strides(&self) -> std::borrow::Cow<'_, [usize]>;
-    fn data(&self) -> &[f32];
+    fn data(&self) -> &[Self::Elem];
     fn rank(&self) -> usize {
         self.shape().rank()
     }
@@ -171,11 +173,13 @@ pub trait TensorOrView {
     }
 }
 
-impl TensorOrView for Tensor {
+impl<'a, T: WithDType> TensorOrView for Tensor<'a, T> {
+    type Elem = T;
+
     fn shape(&self) -> &Shape {
         self.shape()
     }
-    fn data(&self) -> &[f32] {
+    fn data(&self) -> &[T] {
         self.data()
     }
     fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
@@ -183,11 +187,13 @@ impl TensorOrView for Tensor {
     }
 }
 
-impl TensorOrView for TensorView<'_> {
+impl<'a, T: WithDType> TensorOrView for TensorView<'a, T> {
+    type Elem = T;
+
     fn shape(&self) -> &Shape {
         self.shape()
     }
-    fn data(&self) -> &[f32] {
+    fn data(&self) -> &[T] {
         self.data()
     }
     fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
