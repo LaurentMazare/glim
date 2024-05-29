@@ -1,4 +1,5 @@
 use crate::WithDType;
+use anyhow::Result;
 
 pub enum CowMut<'a, T> {
     Owned(T),
@@ -28,4 +29,10 @@ impl<'a, T> std::ops::DerefMut for CowMut<'a, T> {
 #[derive(Clone)]
 pub struct Storage<T: WithDType> {
     pub inner: Vec<T>,
+}
+
+impl<T: WithDType> Storage<T> {
+    pub fn cst(t: T, elts: usize) -> Result<Self> {
+        Ok(Self { inner: vec![t; elts] })
+    }
 }

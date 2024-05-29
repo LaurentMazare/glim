@@ -92,7 +92,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize) -> Result<()> {
+    pub fn transpose(&mut self, src: &Tensor<'_, T>, dim1: usize, dim2: usize) -> Result<()> {
         if src.elem_count() != self.elem_count() {
             anyhow::bail!(
                 "num-elems mismatch in transpose, dst {:?} src {:?}",
