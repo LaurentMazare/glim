@@ -218,17 +218,16 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
         Ok(())
     }
 
-    // TODO: use a TensorView or a StridedTensor.
-    pub fn matmul<V: crate::TensorOrView<Elem = T>>(
+    pub fn matmul<V1: crate::TensorOrView<Elem = T>, V2: crate::TensorOrView<Elem = T>>(
         &mut self,
-        lhs: &Tensor<'_, T>,
-        rhs: &V,
+        lhs: &V1,
+        rhs: &V2,
         rhs_t: bool,
     ) -> Result<()> {
         let (lhs_b, lhs_m, lhs_k) = match lhs.dims() {
             [a, b] => (1, *a, *b),
             [a, b, c] => (*a, *b, *c),
-            _ => anyhow::bail!("unexpected shape for matmul lhs {:?}", &lhs.shape),
+            _ => anyhow::bail!("unexpected shape for matmul lhs {:?}", &lhs.shape()),
         };
         let (rhs_b, rhs_k, rhs_n) = match rhs.dims() {
             [a, b] => (1, *a, *b),
@@ -265,7 +264,12 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
             if lhs.rank() == 2 && rhs.rank() == 2 { (m, n).into() } else { (lhs_b, m, n).into() };
         let b_stride = rhs.strides()[0];
         let (dst_rs, dst_cs) = (n, 1);
-        let (lhs_rs, lhs_cs) = (k, 1);
+        let (lhs_stride_m2, lhs_stride_m1) = {
+            let l = lhs.strides().len();
+            (lhs.strides()[l - 2], lhs.strides()[l - 1])
+        };
+
+        let (lhs_rs, lhs_cs) = (lhs_stride_m2, lhs_stride_m1);
         let (rhs_stride_m2, rhs_stride_m1) = {
             let l = rhs.strides().len();
             (rhs.strides()[l - 2], rhs.strides()[l - 1])
