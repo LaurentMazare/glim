@@ -1,7 +1,8 @@
-use crate::Shape;
+use crate::{tensor, Shape};
 use anyhow::Result;
 use rayon::prelude::*;
 
+type Storage = crate::storage::Storage<f32>;
 type Tensor = crate::Tensor<'static, f32>;
 
 #[derive(Debug, Clone)]
@@ -55,7 +56,13 @@ impl Linear {
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
+    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor) -> Result<tensor::Tensor<'a, f32>> {
+        let mut dst = tensor::Tensor::new(dst, 1)?;
+        dst.matmul(src, &self.w, true)?;
+        Ok(dst)
+    }
+
+    fn fwd_inplace(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
         dst.matmul(src, &self.w, true)
     }
 }
@@ -74,7 +81,7 @@ impl RmsNorm {
         Ok(Self { alpha: w, dim_m1, eps })
     }
 
-    fn fwd(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
         let alpha = self.alpha.data();
         let src = src.data();
         let dst = dst.data_mut();
@@ -124,9 +131,9 @@ pub struct State {
     fc1_xs: Tensor,
     fc2_xs: Tensor,
     rms_xs: Tensor,
-    attn_q: Tensor,
-    attn_k: Tensor,
-    attn_v: Tensor,
+    attn_q: Storage,
+    attn_k: Storage,
+    attn_v: Storage,
     attn_q_t: Tensor,
     attn_k_t: Tensor,
     attn_v_t: Tensor,
@@ -154,9 +161,9 @@ impl State {
         let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
         let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
         let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
-        let attn_q = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let attn_k = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let attn_v = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_q = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_q_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_k_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_v_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
@@ -235,24 +242,24 @@ impl Model {
         }
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
-            layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
+            layer.rms1.fwd_inplace(&mut state.rms_xs, &state.xs)?;
             {
                 // Attention
-                layer.attn.q_proj.fwd(&mut state.attn_q, &state.rms_xs)?;
-                layer.attn.k_proj.fwd(&mut state.attn_k, &state.rms_xs)?;
-                layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
+                let mut attn_q = layer.attn.q_proj.fwd(&mut state.attn_q, &state.rms_xs)?;
+                let mut attn_k = layer.attn.k_proj.fwd(&mut state.attn_k, &state.rms_xs)?;
+                let mut attn_v = layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
 
-                state.attn_q.reshape((b_sz, seq_len, h, d))?;
-                state.attn_q_t.transpose(&state.attn_q, 1, 2)?;
+                attn_q.reshape((b_sz, seq_len, h, d))?;
+                state.attn_q_t.transpose(&attn_q, 1, 2)?;
                 state.attn_q_t.rope_i(&state.cos, &state.sin, pos)?;
                 state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
 
-                state.attn_k.reshape((b_sz, seq_len, h, d))?;
-                state.attn_k_t.transpose(&state.attn_k, 1, 2)?;
+                attn_k.reshape((b_sz, seq_len, h, d))?;
+                state.attn_k_t.transpose(&attn_k, 1, 2)?;
                 state.attn_k_t.rope_i(&state.cos, &state.sin, pos)?;
 
-                state.attn_v.reshape((b_sz, seq_len, h, d))?;
-                state.attn_v_t.transpose(&state.attn_v, 1, 2)?;
+                attn_v.reshape((b_sz, seq_len, h, d))?;
+                state.attn_v_t.transpose(&attn_v, 1, 2)?;
                 // kv-cache
                 let (k, v) = state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
                 let k = k.flatten(0, 1)?;
@@ -268,23 +275,23 @@ impl Model {
                 state.attn_xs.reshape((b_sz, h, seq_len, d))?;
                 state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
                 state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;
-                layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs_t)?;
+                layer.attn.o_proj.fwd_inplace(&mut state.rms_xs, &state.attn_xs_t)?;
             }
             state.xs.add(&state.rms_xs)?;
 
-            layer.rms2.fwd(&mut state.rms_xs, &state.xs)?;
+            layer.rms2.fwd_inplace(&mut state.rms_xs, &state.xs)?;
             {
                 // MLP
-                layer.mlp.c_fc1.fwd(&mut state.fc1_xs, &state.rms_xs)?;
-                layer.mlp.c_fc2.fwd(&mut state.fc2_xs, &state.rms_xs)?;
+                layer.mlp.c_fc1.fwd_inplace(&mut state.fc1_xs, &state.rms_xs)?;
+                layer.mlp.c_fc2.fwd_inplace(&mut state.fc2_xs, &state.rms_xs)?;
                 state.fc1_xs.silu();
                 state.fc1_xs.mult(&state.fc2_xs)?;
-                layer.mlp.c_proj.fwd(&mut state.rms_xs, &state.fc1_xs)?;
+                layer.mlp.c_proj.fwd_inplace(&mut state.rms_xs, &state.fc1_xs)?;
             }
             state.xs.add(&state.rms_xs)?;
         }
-        self.ln_f.fwd(&mut state.rms_xs, &state.xs)?;
-        self.lm_head.fwd(&mut state.logits, &state.rms_xs)?;
+        self.ln_f.fwd_inplace(&mut state.rms_xs, &state.xs)?;
+        self.lm_head.fwd_inplace(&mut state.logits, &state.rms_xs)?;
         Ok(())
     }
 
