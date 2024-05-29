@@ -184,7 +184,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         Ok(Tensor { data: CowMut::Owned(storage), shape: self.shape.clone() })
     }
 
-    pub fn rope(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+    pub fn rope(&mut self, cos: &Tensor<'_, T>, sin: &Tensor<'_, T>, pos: usize) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -199,7 +199,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 
-    pub fn rope_i(&mut self, cos: &Self, sin: &Self, pos: usize) -> Result<()> {
+    pub fn rope_i(&mut self, cos: &Tensor<'_, T>, sin: &Tensor<'_, T>, pos: usize) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -344,7 +344,7 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
 }
 
 impl<'a> Tensor<'a, f32> {
-    pub fn softmax(&mut self, src: &Self) -> Result<()> {
+    pub fn softmax(&mut self, src: &Tensor<'_, f32>) -> Result<()> {
         if src.shape.elem_count() > self.capacity() {
             anyhow::bail!("missing capacity for softmax {} {:?}", self.capacity(), src.shape)
         }
