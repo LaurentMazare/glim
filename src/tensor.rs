@@ -10,6 +10,10 @@ pub struct Tensor<'a, T: WithDType> {
 }
 
 impl<'a, T: WithDType> Tensor<'a, T> {
+    pub fn dtype(&self) -> crate::DType {
+        T::DTYPE
+    }
+
     pub fn shape(&self) -> &Shape {
         &self.shape
     }

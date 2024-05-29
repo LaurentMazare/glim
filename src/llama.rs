@@ -1,9 +1,9 @@
-use crate::{tensor, Shape};
+use crate::{tensor, Shape, Tensor};
 use anyhow::Result;
 use rayon::prelude::*;
 
 type Storage = crate::storage::Storage<f32>;
-type Tensor = crate::Tensor<'static, f32>;
+type TensorS = crate::TensorS<f32>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -41,7 +41,7 @@ impl Config {
 }
 
 struct Linear {
-    w: Tensor,
+    w: TensorS,
     #[allow(unused)]
     in_c: usize,
     #[allow(unused)]
@@ -49,62 +49,46 @@ struct Linear {
 }
 
 impl Linear {
-    fn new(w: Tensor, in_c: usize, out_c: usize) -> Result<Self> {
+    fn new(w: TensorS, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
         }
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a>(
-        &self,
-        dst: &'a mut Storage,
-        src: &tensor::Tensor<'_, f32>,
-    ) -> Result<tensor::Tensor<'a, f32>> {
+    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor<'_, f32>) -> Result<Tensor<'a, f32>> {
         // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
-        let mut dst = tensor::Tensor::new(dst, 1)?;
+        let mut dst = Tensor::new(dst, 1)?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(
-        &self,
-        dst: &mut tensor::Tensor<'_, f32>,
-        src: &tensor::Tensor<'_, f32>,
-    ) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32>, src: &Tensor<'_, f32>) -> Result<()> {
         dst.matmul_(src, &self.w, true)
     }
 }
 
 struct RmsNorm {
-    alpha: Tensor,
+    alpha: TensorS,
     eps: f32,
     dim_m1: usize,
 }
 
 impl RmsNorm {
-    fn new(w: Tensor, eps: f32, dim_m1: usize) -> Result<Self> {
+    fn new(w: TensorS, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
         }
         Ok(Self { alpha: w, dim_m1, eps })
     }
 
-    fn fwd<'a>(
-        &self,
-        dst: &'a mut Storage,
-        src: &tensor::Tensor<'_, f32>,
-    ) -> Result<tensor::Tensor<'a, f32>> {
-        let mut dst = tensor::Tensor::new(dst, src.shape())?;
+    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor<'_, f32>) -> Result<Tensor<'a, f32>> {
+        let mut dst = Tensor::new(dst, src.shape())?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(
-        &self,
-        dst: &mut tensor::Tensor<'_, f32>,
-        src: &tensor::Tensor<'_, f32>,
-    ) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32>, src: &Tensor<'_, f32>) -> Result<()> {
         let alpha = self.alpha.data();
         let src = src.data();
         let dst = dst.data_mut();
@@ -142,7 +126,7 @@ struct Layer {
 }
 
 pub struct Model {
-    embedding: Tensor,
+    embedding: TensorS,
     layers: Vec<Layer>,
     ln_f: RmsNorm,
     lm_head: Linear,
@@ -150,7 +134,7 @@ pub struct Model {
 }
 
 pub struct State {
-    xs: Tensor,
+    xs: TensorS,
     fc1_xs: Storage,
     fc2_xs: Storage,
     rms_xs: Storage,
@@ -164,9 +148,9 @@ pub struct State {
     attn_scores: Storage,
     attn_xs: Storage,
     attn_xs_t: Storage,
-    logits: Tensor,
-    cos: Tensor,
-    sin: Tensor,
+    logits: TensorS,
+    cos: TensorS,
+    sin: TensorS,
     b_sz: usize,
     kv_caches: Vec<crate::kv_cache::KvCache<'static, f32>>,
 }
@@ -237,7 +221,7 @@ impl State {
         })
     }
 
-    pub fn logits(&self) -> &Tensor {
+    pub fn logits(&self) -> &TensorS {
         &self.logits
     }
 }

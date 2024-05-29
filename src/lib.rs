@@ -10,3 +10,5 @@ pub use dtype::{DType, WithDType};
 pub use shape::{Dim, Shape, D};
 pub use tensor::Tensor;
 pub use tensor_view::{TensorOrView, TensorView};
+
+pub type TensorS<T> = Tensor<'static, T>;
