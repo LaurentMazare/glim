@@ -219,6 +219,19 @@ impl<'a, T: WithDType> Tensor<'a, T> {
     }
 }
 
+#[cfg(feature = "candle")]
+impl<'a, T: WithDType + candle::WithDType> Tensor<'a, T> {
+    pub fn to_candle(&self) -> Result<candle::Tensor> {
+        let t = candle::Tensor::from_slice(self.data(), self.dims(), &candle::Device::Cpu)?;
+        Ok(t)
+    }
+
+    pub fn from_candle(t: &candle::Tensor) -> Result<Self> {
+        let data = t.flatten_all()?.to_vec1::<T>()?;
+        Tensor::owned(data, t.dims())
+    }
+}
+
 impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
     pub fn cos(&mut self) {
         for d in self.data_mut().iter_mut() {

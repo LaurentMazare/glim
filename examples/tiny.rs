@@ -30,8 +30,6 @@ fn main() -> anyhow::Result<()> {
         let distr = rand::distributions::WeightedIndex::new(prs.data())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);
-        // #[cfg(feature = "candle")]
-        // println!("{}", state.logits().to_candle()?);
     }
     let dt = start_time.elapsed();
     let s = tokenizer.decode(&tokens, false).unwrap();
@@ -41,5 +39,7 @@ fn main() -> anyhow::Result<()> {
         tokens.len() - 1,
         (tokens.len() - 1) as f64 / dt.as_secs_f64()
     );
+    #[cfg(feature = "candle")]
+    println!("{}", state.logits().to_candle()?);
     Ok(())
 }
