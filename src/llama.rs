@@ -62,7 +62,7 @@ impl Linear {
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor, src: &tensor::Tensor<'_, f32>) -> Result<()> {
         dst.matmul(src, &self.w, true)
     }
 }
@@ -128,8 +128,8 @@ pub struct Model {
 
 pub struct State {
     xs: Tensor,
-    fc1_xs: Tensor,
-    fc2_xs: Tensor,
+    fc1_xs: Storage,
+    fc2_xs: Storage,
     rms_xs: Tensor,
     attn_q: Storage,
     attn_k: Storage,
@@ -154,8 +154,8 @@ impl State {
         let max_seq_len = cfg.max_seq_len;
         let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
         let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let fc1_xs = Tensor::cst(0., (b_sz, seq_len, cfg.hidden_dim))?;
-        let fc2_xs = Tensor::cst(0., (b_sz, seq_len, cfg.hidden_dim))?;
+        let fc1_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
+        let fc2_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
         let rms_xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
         let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
@@ -282,11 +282,11 @@ impl Model {
             layer.rms2.fwd_inplace(&mut state.rms_xs, &state.xs)?;
             {
                 // MLP
-                layer.mlp.c_fc1.fwd_inplace(&mut state.fc1_xs, &state.rms_xs)?;
-                layer.mlp.c_fc2.fwd_inplace(&mut state.fc2_xs, &state.rms_xs)?;
-                state.fc1_xs.silu();
-                state.fc1_xs.mult(&state.fc2_xs)?;
-                layer.mlp.c_proj.fwd_inplace(&mut state.rms_xs, &state.fc1_xs)?;
+                let mut fc1_xs = layer.mlp.c_fc1.fwd(&mut state.fc1_xs, &state.rms_xs)?;
+                let fc2_xs = layer.mlp.c_fc2.fwd(&mut state.fc2_xs, &state.rms_xs)?;
+                fc1_xs.silu();
+                fc1_xs.mult(&fc2_xs)?;
+                layer.mlp.c_proj.fwd_inplace(&mut state.rms_xs, &fc1_xs)?;
             }
             state.xs.add(&state.rms_xs)?;
         }

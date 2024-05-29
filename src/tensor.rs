@@ -64,7 +64,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn mult(&mut self, src: &Self) -> Result<()> {
+    pub fn mult(&mut self, src: &Tensor<'_, T>) -> Result<()> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in mult {:?} {:?}", self.shape, src.shape)
         }
