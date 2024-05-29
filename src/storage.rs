@@ -1,7 +1,6 @@
 use crate::tensor::{rope, rope_i, softmax};
-use crate::{Dim, Shape};
+use crate::{Dim, Shape, WithDType};
 use anyhow::Result;
-use half::{bf16, f16};
 
 pub enum CowMut<'a, T> {
     Owned(T),
@@ -26,29 +25,6 @@ impl<'a, T> std::ops::DerefMut for CowMut<'a, T> {
             Self::Borrowed(r) => r,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DType {
-    F16,
-    BF16,
-    F32,
-}
-
-pub trait WithDType: Sized + Copy + num_traits::NumAssign + 'static {
-    const DTYPE: DType;
-}
-
-impl WithDType for f16 {
-    const DTYPE: DType = DType::F16;
-}
-
-impl WithDType for bf16 {
-    const DTYPE: DType = DType::BF16;
-}
-
-impl WithDType for f32 {
-    const DTYPE: DType = DType::F32;
 }
 
 #[derive(Clone)]
