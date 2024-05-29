@@ -338,9 +338,9 @@ impl Tensor {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn copy2d(
-    dst: &mut [f32],
-    src: &[f32],
+pub(crate) fn copy2d<T: Copy>(
+    dst: &mut [T],
+    src: &[T],
     d1: usize,
     d2: usize,
     dst_s: usize,
