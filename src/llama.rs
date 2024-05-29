@@ -157,13 +157,13 @@ pub struct State {
     attn_q: Storage,
     attn_k: Storage,
     attn_v: Storage,
-    attn_q_t: Tensor,
-    attn_k_t: Tensor,
-    attn_v_t: Tensor,
+    attn_q_t: Storage,
+    attn_k_t: Storage,
+    attn_v_t: Storage,
     attn_sm: Tensor,
     attn_scores: Tensor,
     attn_xs: Tensor,
-    attn_xs_t: Tensor,
+    attn_xs_t: Storage,
     logits: Tensor,
     cos: Tensor,
     sin: Tensor,
@@ -181,15 +181,15 @@ impl State {
         let fc2_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
         let rms_xs = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
-        let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
+        let attn_xs_t = Storage::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
         let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
         let attn_sm = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
         let attn_q = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_k = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_v = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_q_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let attn_k_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let attn_v_t = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let attn_q_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
@@ -266,7 +266,7 @@ impl Model {
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             {
-                {
+                let attn_xs = {
                     let rms_xs = layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
                     // Attention
                     let mut attn_q = layer.attn.q_proj.fwd(&mut state.attn_q, &rms_xs)?;
@@ -274,23 +274,22 @@ impl Model {
                     let mut attn_v = layer.attn.v_proj.fwd(&mut state.attn_v, &rms_xs)?;
 
                     attn_q.reshape((b_sz, seq_len, h, d))?;
-                    state.attn_q_t.transpose(&attn_q, 1, 2)?;
-                    state.attn_q_t.rope_i(&state.cos, &state.sin, pos)?;
-                    state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
+                    let mut attn_q = attn_q.transpose(&mut state.attn_q_t, 1, 2)?;
+                    attn_q.rope_i(&state.cos, &state.sin, pos)?;
+                    attn_q.reshape((b_sz * h, seq_len, d))?;
 
                     attn_k.reshape((b_sz, seq_len, h, d))?;
-                    state.attn_k_t.transpose(&attn_k, 1, 2)?;
-                    state.attn_k_t.rope_i(&state.cos, &state.sin, pos)?;
+                    let mut attn_k = attn_k.transpose(&mut state.attn_k_t, 1, 2)?;
+                    attn_k.rope_i(&state.cos, &state.sin, pos)?;
 
                     attn_v.reshape((b_sz, seq_len, h, d))?;
-                    state.attn_v_t.transpose(&attn_v, 1, 2)?;
+                    let attn_v = attn_v.transpose(&mut state.attn_v_t, 1, 2)?;
                     // kv-cache
-                    let (k, v) =
-                        state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
+                    let (k, v) = state.kv_caches[layer_idx].append(&attn_k, &attn_v)?;
                     let k = k.flatten(0, 1)?;
                     let v = v.flatten(0, 1)?;
                     // TODO: repeat-kv
-                    state.attn_scores.matmul(&state.attn_q_t, &k, true)?;
+                    state.attn_scores.matmul(&attn_q, &k, true)?;
                     state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
@@ -298,11 +297,12 @@ impl Model {
                     // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
                     state.attn_xs.matmul(&state.attn_sm, &v, false)?;
                     state.attn_xs.reshape((b_sz, h, seq_len, d))?;
-                    state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
-                    state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;
-                }
+                    let mut attn_xs = state.attn_xs.transpose(&mut state.attn_xs_t, 1, 2)?;
+                    attn_xs.reshape((b_sz, seq_len, h * d))?;
+                    attn_xs
+                };
                 {
-                    let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs_t)?;
+                    let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
                     state.xs.add(&o)?;
                 }
             }

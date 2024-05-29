@@ -92,50 +92,55 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn transpose(&mut self, src: &Tensor<'_, T>, dim1: usize, dim2: usize) -> Result<()> {
-        if src.elem_count() != self.elem_count() {
+    pub fn transpose<'b>(
+        &self,
+        dst: &'b mut Storage<T>,
+        dim1: usize,
+        dim2: usize,
+    ) -> Result<Tensor<'b, T>> {
+        if dst.inner.len() != self.elem_count() {
             anyhow::bail!(
-                "num-elems mismatch in transpose, dst {:?} src {:?}",
+                "num-elems mismatch in transpose, dst {} src {:?}",
+                dst.inner.len(),
                 self.shape(),
-                src.shape()
             )
         }
-        if dim1 >= src.rank() || dim2 >= src.rank() {
+        if dim1 >= self.rank() || dim2 >= self.rank() {
             anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
         }
+        let dims = self.dims();
         if dim1 == dim2 {
-            self.data_mut().copy_from_slice(src.data());
-            return Ok(());
-        }
-        let dst_data = self.data_mut();
-        let src_data = src.data();
-        let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
-        let dims = src.shape().dims();
-        let d_i = dims[..dim1].iter().product::<usize>();
-        let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
-        let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
-        let d1 = dims[dim1];
-        let d2 = dims[dim2];
-        // Inefficient, we should blit the data where possible.
-        // i: pre
-        for i in 0..d_i {
-            for a1 in 0..d1 {
-                // j: mid
-                for j in 0..d_j {
-                    for a2 in 0..d2 {
-                        // k: post
-                        for k in 0..d_k {
-                            let src_idx = i * d1 * d_j * d2 * d_k
-                                + a1 * d_j * d2 * d_k
-                                + j * d2 * d_k
-                                + a2 * d_k
-                                + k;
-                            let dst_idx = i * d2 * d_j * d1 * d_k
-                                + a2 * d_j * d1 * d_k
-                                + j * d1 * d_k
-                                + a1 * d_k
-                                + k;
-                            dst_data[dst_idx] = src_data[src_idx]
+            dst.inner.copy_from_slice(self.data());
+        } else {
+            let dst_data = &mut dst.inner;
+            let src_data = self.data();
+            let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
+            let d_i = dims[..dim1].iter().product::<usize>();
+            let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
+            let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
+            let d1 = dims[dim1];
+            let d2 = dims[dim2];
+            // Inefficient, we should blit the data where possible.
+            // i: pre
+            for i in 0..d_i {
+                for a1 in 0..d1 {
+                    // j: mid
+                    for j in 0..d_j {
+                        for a2 in 0..d2 {
+                            // k: post
+                            for k in 0..d_k {
+                                let src_idx = i * d1 * d_j * d2 * d_k
+                                    + a1 * d_j * d2 * d_k
+                                    + j * d2 * d_k
+                                    + a2 * d_k
+                                    + k;
+                                let dst_idx = i * d2 * d_j * d1 * d_k
+                                    + a2 * d_j * d1 * d_k
+                                    + j * d1 * d_k
+                                    + a1 * d_k
+                                    + k;
+                                dst_data[dst_idx] = src_data[src_idx]
+                            }
                         }
                     }
                 }
@@ -143,8 +148,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         }
         let mut shape = dims.to_vec();
         shape.swap(dim1, dim2);
-        self.shape = shape.into();
-        Ok(())
+        Ok(Tensor { data: CowMut::Borrowed(dst), shape: shape.into() })
     }
 
     pub fn slice_assign<D: Dim>(
