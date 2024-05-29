@@ -38,7 +38,7 @@ impl<'a, T: WithDType> Cache<'a, T> {
         view.narrow(self.dim, 0, Some(self.current_seq_len))
     }
 
-    pub fn append<'b>(&mut self, src: &Tensor<'b, T>) -> Result<()> {
+    pub fn append(&mut self, src: &Tensor<'_, T>) -> Result<()> {
         let seq_len = src.dim(self.dim)?;
         if self.current_seq_len + seq_len > self.max_seq_len {
             anyhow::bail!(
@@ -75,10 +75,10 @@ impl<'a, T: WithDType> KvCache<'a, T> {
         &self.v
     }
 
-    pub fn append<'b, 'c>(
+    pub fn append<'b>(
         &'b mut self,
-        k: &Tensor<'c, T>,
-        v: &Tensor<'c, T>,
+        k: &Tensor<'_, T>,
+        v: &Tensor<'_, T>,
     ) -> Result<(TensorView<'b, T>, TensorView<'b, T>)> {
         self.k.append(k)?;
         self.v.append(v)?;
