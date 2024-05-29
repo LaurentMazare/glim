@@ -56,13 +56,22 @@ impl Linear {
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor) -> Result<tensor::Tensor<'a, f32>> {
+    fn fwd<'a, 'b>(
+        &self,
+        dst: &'a mut Storage,
+        src: &tensor::Tensor<'b, f32>,
+    ) -> Result<tensor::Tensor<'a, f32>> {
+        // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
         let mut dst = tensor::Tensor::new(dst, 1)?;
-        dst.matmul(src, &self.w, true)?;
+        self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor, src: &tensor::Tensor<'_, f32>) -> Result<()> {
+    fn fwd_inplace(
+        &self,
+        dst: &mut tensor::Tensor<'_, f32>,
+        src: &tensor::Tensor<'_, f32>,
+    ) -> Result<()> {
         dst.matmul(src, &self.w, true)
     }
 }
@@ -81,7 +90,21 @@ impl RmsNorm {
         Ok(Self { alpha: w, dim_m1, eps })
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor, src: &Tensor) -> Result<()> {
+    fn fwd<'a>(
+        &self,
+        dst: &'a mut Storage,
+        src: &tensor::Tensor<'_, f32>,
+    ) -> Result<tensor::Tensor<'a, f32>> {
+        let mut dst = tensor::Tensor::new(dst, src.shape())?;
+        self.fwd_inplace(&mut dst, src)?;
+        Ok(dst)
+    }
+
+    fn fwd_inplace(
+        &self,
+        dst: &mut tensor::Tensor<'_, f32>,
+        src: &tensor::Tensor<'_, f32>,
+    ) -> Result<()> {
         let alpha = self.alpha.data();
         let src = src.data();
         let dst = dst.data_mut();
@@ -130,7 +153,7 @@ pub struct State {
     xs: Tensor,
     fc1_xs: Storage,
     fc2_xs: Storage,
-    rms_xs: Tensor,
+    rms_xs: Storage,
     attn_q: Storage,
     attn_k: Storage,
     attn_v: Storage,
@@ -156,7 +179,7 @@ impl State {
         let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
         let fc1_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
         let fc2_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let rms_xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
+        let rms_xs = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
         let attn_xs = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, cfg.head_dim()))?;
         let attn_xs_t = Tensor::cst(0., (b_sz, seq_len, cfg.n_heads * cfg.head_dim()))?;
         let attn_scores = Tensor::cst(0., (b_sz * cfg.n_heads, seq_len, max_seq_len))?;
@@ -242,56 +265,61 @@ impl Model {
         }
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
-            layer.rms1.fwd_inplace(&mut state.rms_xs, &state.xs)?;
             {
-                // Attention
-                let mut attn_q = layer.attn.q_proj.fwd(&mut state.attn_q, &state.rms_xs)?;
-                let mut attn_k = layer.attn.k_proj.fwd(&mut state.attn_k, &state.rms_xs)?;
-                let mut attn_v = layer.attn.v_proj.fwd(&mut state.attn_v, &state.rms_xs)?;
+                {
+                    let rms_xs = layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
+                    // Attention
+                    let mut attn_q = layer.attn.q_proj.fwd(&mut state.attn_q, &rms_xs)?;
+                    let mut attn_k = layer.attn.k_proj.fwd(&mut state.attn_k, &rms_xs)?;
+                    let mut attn_v = layer.attn.v_proj.fwd(&mut state.attn_v, &rms_xs)?;
 
-                attn_q.reshape((b_sz, seq_len, h, d))?;
-                state.attn_q_t.transpose(&attn_q, 1, 2)?;
-                state.attn_q_t.rope_i(&state.cos, &state.sin, pos)?;
-                state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
+                    attn_q.reshape((b_sz, seq_len, h, d))?;
+                    state.attn_q_t.transpose(&attn_q, 1, 2)?;
+                    state.attn_q_t.rope_i(&state.cos, &state.sin, pos)?;
+                    state.attn_q_t.reshape((b_sz * h, seq_len, d))?;
 
-                attn_k.reshape((b_sz, seq_len, h, d))?;
-                state.attn_k_t.transpose(&attn_k, 1, 2)?;
-                state.attn_k_t.rope_i(&state.cos, &state.sin, pos)?;
+                    attn_k.reshape((b_sz, seq_len, h, d))?;
+                    state.attn_k_t.transpose(&attn_k, 1, 2)?;
+                    state.attn_k_t.rope_i(&state.cos, &state.sin, pos)?;
 
-                attn_v.reshape((b_sz, seq_len, h, d))?;
-                state.attn_v_t.transpose(&attn_v, 1, 2)?;
-                // kv-cache
-                let (k, v) = state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
-                let k = k.flatten(0, 1)?;
-                let v = v.flatten(0, 1)?;
-                // TODO: repeat-kv
-                state.attn_scores.matmul(&state.attn_q_t, &k, true)?;
-                state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
-                // no causal mask, as the sequence length is 1.
-                // state.attn_scores.apply_causality_mask()?;
-                state.attn_sm.softmax(&state.attn_scores)?;
-                // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                state.attn_xs.matmul(&state.attn_sm, &v, false)?;
-                state.attn_xs.reshape((b_sz, h, seq_len, d))?;
-                state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
-                state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;
-                layer.attn.o_proj.fwd_inplace(&mut state.rms_xs, &state.attn_xs_t)?;
+                    attn_v.reshape((b_sz, seq_len, h, d))?;
+                    state.attn_v_t.transpose(&attn_v, 1, 2)?;
+                    // kv-cache
+                    let (k, v) =
+                        state.kv_caches[layer_idx].append(&state.attn_k_t, &state.attn_v_t)?;
+                    let k = k.flatten(0, 1)?;
+                    let v = v.flatten(0, 1)?;
+                    // TODO: repeat-kv
+                    state.attn_scores.matmul(&state.attn_q_t, &k, true)?;
+                    state.attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt());
+                    // no causal mask, as the sequence length is 1.
+                    // state.attn_scores.apply_causality_mask()?;
+                    state.attn_sm.softmax(&state.attn_scores)?;
+                    // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
+                    state.attn_xs.matmul(&state.attn_sm, &v, false)?;
+                    state.attn_xs.reshape((b_sz, h, seq_len, d))?;
+                    state.attn_xs_t.transpose(&state.attn_xs, 1, 2)?;
+                    state.attn_xs_t.reshape((b_sz, seq_len, h * d))?;
+                }
+                {
+                    let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &state.attn_xs_t)?;
+                    state.xs.add(&o)?;
+                }
             }
-            state.xs.add(&state.rms_xs)?;
 
-            layer.rms2.fwd_inplace(&mut state.rms_xs, &state.xs)?;
             {
+                let rms_xs = layer.rms2.fwd(&mut state.rms_xs, &state.xs)?;
                 // MLP
-                let mut fc1_xs = layer.mlp.c_fc1.fwd(&mut state.fc1_xs, &state.rms_xs)?;
-                let fc2_xs = layer.mlp.c_fc2.fwd(&mut state.fc2_xs, &state.rms_xs)?;
+                let mut fc1_xs = layer.mlp.c_fc1.fwd(&mut state.fc1_xs, &rms_xs)?;
+                let fc2_xs = layer.mlp.c_fc2.fwd(&mut state.fc2_xs, &rms_xs)?;
                 fc1_xs.silu();
                 fc1_xs.mult(&fc2_xs)?;
-                layer.mlp.c_proj.fwd_inplace(&mut state.rms_xs, &fc1_xs)?;
+                let o = layer.mlp.c_proj.fwd(&mut state.rms_xs, &fc1_xs)?;
+                state.xs.add(&o)?;
             }
-            state.xs.add(&state.rms_xs)?;
         }
-        self.ln_f.fwd_inplace(&mut state.rms_xs, &state.xs)?;
-        self.lm_head.fwd_inplace(&mut state.logits, &state.rms_xs)?;
+        let rms_xs = self.ln_f.fwd(&mut state.rms_xs, &state.xs)?;
+        self.lm_head.fwd_inplace(&mut state.logits, &rms_xs)?;
         Ok(())
     }
 

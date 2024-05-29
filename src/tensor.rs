@@ -56,7 +56,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         self.data_mut().iter_mut().for_each(|v| *v *= m)
     }
 
-    pub fn add(&mut self, src: &Self) -> Result<()> {
+    pub fn add(&mut self, src: &Tensor<'_, T>) -> Result<()> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in add {:?} {:?}", self.shape, src.shape)
         }
