@@ -11,9 +11,15 @@ pub trait Backend: Sized {
     const LOCATION: Location;
     type Device: Clone;
 
+    /// # Safety
+    /// This function allocates an unitialized block of memory. It is the responsibility of the
+    /// caller to set the memory before using or returning the block.
     unsafe fn alloc_uninit(len: usize, dtype: DType, device: &Self::Device) -> Result<Self>;
 
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     fn device(&self) -> &Self::Device;
     fn dtype(&self) -> DType;
