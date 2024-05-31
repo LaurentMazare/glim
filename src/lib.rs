@@ -1,3 +1,4 @@
+pub mod device;
 pub mod dtype;
 pub mod kv_cache;
 pub mod llama;
