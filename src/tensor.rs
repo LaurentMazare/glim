@@ -271,7 +271,7 @@ impl<'a, T: WithDTypeT, B: ?Sized + BackendSliceF<T>> Tensor<'a, T, B> {
             )
         }
         let dst_elems = lhs_b * lhs_m * rhs_n;
-        if dst_elems > self.data().len() {
+        if dst_elems > self.data.as_ref().len() {
             anyhow::bail!(
                 "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
                 self.data().len(),
@@ -298,7 +298,7 @@ impl<'a, T: WithDTypeT, B: ?Sized + BackendSliceF<T>> Tensor<'a, T, B> {
         let (rhs_rs, rhs_cs) =
             if rhs_t { (rhs_stride_m1, rhs_stride_m2) } else { (rhs_stride_m2, rhs_stride_m1) };
 
-        self.data_mut().gemm(
+        self.data.as_mut_ref().gemm(
             lhs.data(),
             rhs.data(),
             m,
