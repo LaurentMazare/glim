@@ -88,13 +88,10 @@ impl<T: crate::WithDType> crate::Backend<T> for Dummy {
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()> {
         anyhow::bail!("not implemented")
     }
-    fn cst(v: T, len: usize) -> Result<Self> {
+    fn from_vec(v: Vec<T>, _: &Self::Device) -> Result<Self> {
         anyhow::bail!("not implemented")
     }
-    fn from_vec(v: Vec<T>) -> Result<Self> {
-        anyhow::bail!("not implemented")
-    }
-    unsafe fn alloc_uninit(len: usize) -> Result<Self> {
+    unsafe fn alloc_uninit(len: usize, _: &Self::Device) -> Result<Self> {
         anyhow::bail!("not implemented")
     }
 }

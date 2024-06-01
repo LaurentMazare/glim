@@ -39,6 +39,10 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         &self.shape
     }
 
+    pub fn device(&self) -> &B::Device {
+        self.data.as_ref().device()
+    }
+
     pub fn storage(&self) -> &B {
         self.data.as_ref()
     }
@@ -365,10 +369,10 @@ pub fn matmul<
 
 impl<T: WithDType, B: Backend<T>> Tensor<'static, T, B> {
     // Create a tensor with an owned storage.
-    pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
+    pub fn cst<S: Into<Shape>>(t: T, shape: S, dev: &B::Device) -> Result<Self> {
         let shape: Shape = shape.into();
         let el_count = shape.elem_count();
-        let mut data = unsafe { B::alloc_uninit(el_count)? };
+        let mut data = unsafe { B::alloc_uninit(el_count, dev)? };
         data.fill(t, el_count)?;
         Ok(Self { data: CowMut::Owned((data, Default::default())), shape })
     }
@@ -381,8 +385,8 @@ impl<T: WithDType, B: Backend<T>> Tensor<'static, T, B> {
         Ok(Self { data: CowMut::Owned((data, Default::default())), shape })
     }
 
-    pub fn from_vec<S: Into<Shape>>(data: Vec<T>, shape: S) -> Result<Self> {
-        let data = B::from_vec(data)?;
+    pub fn from_vec<S: Into<Shape>>(data: Vec<T>, shape: S, dev: &B::Device) -> Result<Self> {
+        let data = B::from_vec(data, dev)?;
         Self::owned(data, shape)
     }
 }

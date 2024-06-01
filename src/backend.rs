@@ -12,10 +12,10 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
     /// # Safety
     /// This function allocates an unitialized block of memory. It is the responsibility of the
     /// caller to set the memory before using or returning the block.
-    unsafe fn alloc_uninit(len: usize) -> Result<Self>;
-    fn from_vec(v: Vec<T>) -> Result<Self>;
-    fn cst(v: T, len: usize) -> Result<Self> {
-        let mut res = unsafe { Self::alloc_uninit(len)? };
+    unsafe fn alloc_uninit(len: usize, dev: &Self::Device) -> Result<Self>;
+    fn from_vec(v: Vec<T>, dev: &Self::Device) -> Result<Self>;
+    fn cst(v: T, len: usize, dev: &Self::Device) -> Result<Self> {
+        let mut res = unsafe { Self::alloc_uninit(len, dev)? };
         res.fill(v, len)?;
         Ok(res)
     }

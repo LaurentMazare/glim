@@ -18,8 +18,8 @@ fn main() -> anyhow::Result<()> {
     let config = glim::llama::Config::tiny_15m();
     let mut prs = vec![0f32; config.vocab_size];
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
-    let model = glim::llama::Model::new(config, "stories15M.safetensors")?;
-    let mut state = glim::llama::State::new(1, model.config())?;
+    let model = glim::llama::Model::new(config, &(), "stories15M.safetensors")?;
+    let mut state = glim::llama::State::new(1, model.config(), &())?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];

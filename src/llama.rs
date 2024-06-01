@@ -142,35 +142,38 @@ pub struct State<B: BackendF<f32>> {
 }
 
 impl<B: BackendF<f32>> State<B> {
-    pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
+    pub fn new(b_sz: usize, cfg: &Config, dev: &B::Device) -> Result<Self> {
+        let b_cst = |s| B::cst(0., s, dev);
+        let t_cst = |s| Tensor::cst(0., s, dev);
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
-        let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
-        let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let fc1_xs = B::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let fc2_xs = B::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let rms_xs = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_xs = B::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
-        let attn_xs_t = B::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
-        let attn_scores = B::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_sm = B::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_q = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_q_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let logits = t_cst((b_sz, seq_len, cfg.vocab_size))?;
+        let xs = t_cst((b_sz, seq_len, cfg.dim))?;
+        let fc1_xs = b_cst(b_sz * seq_len * cfg.hidden_dim)?;
+        let fc2_xs = b_cst(b_sz * seq_len * cfg.hidden_dim)?;
+        let rms_xs = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_xs = b_cst(b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
+        let attn_xs_t = b_cst(b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
+        let attn_scores = b_cst(b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_sm = b_cst(b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_q = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_k = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_v = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_q_t = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_k_t = b_cst(b_sz * seq_len * cfg.dim)?;
+        let attn_v_t = b_cst(b_sz * seq_len * cfg.dim)?;
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
             .map(|i| 1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32))
             .collect();
-        let theta = Tensor::from_vec(theta, (1, head_dim / 2))?;
+        let theta = Tensor::from_vec(theta, (1, head_dim / 2), dev)?;
         let idx_theta = Tensor::from_vec(
             (0..max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
             (max_seq_len, 1),
+            dev,
         )?;
-        let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count())?;
+        let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count(), dev)?;
         mm.matmul_(&idx_theta, &theta, false)?;
         let mut cos = mm.copy()?;
         cos.cos()?;
@@ -179,8 +182,11 @@ impl<B: BackendF<f32>> State<B> {
 
         let mut kv_caches = Vec::with_capacity(cfg.n_layers);
         for _layer_idx in 0..cfg.n_layers {
-            let kv_cache =
-                crate::kv_cache::KvCache::new(2, (b_sz, cfg.n_heads, max_seq_len, cfg.head_dim()))?;
+            let kv_cache = crate::kv_cache::KvCache::new(
+                2,
+                (b_sz, cfg.n_heads, max_seq_len, cfg.head_dim()),
+                dev,
+            )?;
             kv_caches.push(kv_cache)
         }
 
@@ -287,7 +293,7 @@ impl<B: BackendF<f32>> Model<B> {
         Ok(())
     }
 
-    pub fn new<P: AsRef<std::path::Path>>(config: Config, p: P) -> Result<Self> {
+    pub fn new<P: AsRef<std::path::Path>>(config: Config, dev: &B::Device, p: P) -> Result<Self> {
         let data = std::fs::read(p)?;
         let data = safetensors::SafeTensors::deserialize(&data)?;
         let get = |name: &str| {
@@ -299,7 +305,7 @@ impl<B: BackendF<f32>> Model<B> {
                 &mut data,
                 &mut f32_data,
             )?;
-            let data = Tensor::from_vec(f32_data, shape)?;
+            let data = Tensor::from_vec(f32_data, shape, dev)?;
             Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;

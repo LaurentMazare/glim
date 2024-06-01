@@ -10,11 +10,11 @@ pub struct Cache<'a, T: WithDType, B: Backend<T>> {
 }
 
 impl<'a, T: WithDType, B: Backend<T>> Cache<'a, T, B> {
-    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
+    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S, dev: &B::Device) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;
         let max_seq_len = shape.dims()[dim];
-        let all_data = Tensor::cst(T::zero(), shape)?;
+        let all_data = Tensor::cst(T::zero(), shape, dev)?;
         Ok(Self { all_data, dim, current_seq_len: 0, max_seq_len, _phantom: Default::default() })
     }
 
@@ -60,11 +60,11 @@ pub struct KvCache<'a, T: WithDType, B: Backend<T>> {
 }
 
 impl<'a, T: WithDType, B: Backend<T>> KvCache<'a, T, B> {
-    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
+    pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S, dev: &B::Device) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;
-        let k = Cache::new(dim, &shape)?;
-        let v = Cache::new(dim, &shape)?;
+        let k = Cache::new(dim, &shape, dev)?;
+        let v = Cache::new(dim, &shape, dev)?;
         Ok(Self { k, v })
     }
 

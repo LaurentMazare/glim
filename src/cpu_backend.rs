@@ -5,11 +5,11 @@ use rayon::prelude::*;
 impl<T: WithDType> crate::Backend<T> for Vec<T> {
     type Device = ();
 
-    unsafe fn alloc_uninit(len: usize) -> Result<Self> {
+    unsafe fn alloc_uninit(len: usize, _: &Self::Device) -> Result<Self> {
         Ok(vec![T::zero(); len])
     }
 
-    fn from_vec(v: Vec<T>) -> Result<Self> {
+    fn from_vec(v: Vec<T>, _: &Self::Device) -> Result<Self> {
         Ok(v)
     }
 
