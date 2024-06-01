@@ -4,6 +4,10 @@ pub trait BackendAlloc<T: crate::WithDType>: Sized + 'static {
     type Slice: ?Sized;
 
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn slice(&self) -> &Self::Slice;
     fn slice_mut(&mut self) -> &mut Self::Slice;
 
@@ -53,6 +57,7 @@ pub trait BackendSlice<T: crate::WithDType>: 'static {
     fn rope(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
     fn rope_i(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
 
+    #[allow(clippy::too_many_arguments)]
     fn gemm(
         &mut self,
         lhs: &Self,

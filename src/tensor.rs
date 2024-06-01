@@ -81,14 +81,14 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> Tensor<'a, T, B> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in add {:?} {:?}", self.shape, src.shape)
         }
-        self.data_mut().add_assign(&src.data())
+        self.data_mut().add_assign(src.data())
     }
 
     pub fn mult(&mut self, src: &Tensor<'_, T, B>) -> Result<()> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in mult {:?} {:?}", self.shape, src.shape)
         }
-        self.data_mut().mul_assign(&src.data())
+        self.data_mut().mul_assign(src.data())
     }
 
     pub fn data_mut(&mut self) -> &mut B {
@@ -126,7 +126,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> Tensor<'a, T, B> {
         if dim1 >= self.rank() || dim2 >= self.rank() {
             anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
         }
-        dst.transpose(&self.data(), dim1, dim2, self.dims())?;
+        dst.transpose(self.data(), dim1, dim2, self.dims())?;
         let mut shape = self.dims().to_vec();
         shape.swap(dim1, dim2);
         Ok(Tensor { data: CowMut::Borrowed(dst), shape: shape.into() })

@@ -29,7 +29,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
     }
 
     pub fn data(&self) -> &B {
-        &self.inner.data().index(Some(self.start_offset), None)
+        self.inner.data().index(Some(self.start_offset), None)
     }
 
     pub fn shape(&self) -> &Shape {
