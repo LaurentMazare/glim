@@ -7,10 +7,10 @@ pub mod shape;
 pub mod tensor;
 pub mod tensor_view;
 
-pub use backend::Backend;
-pub use dtype::{DType, WithDType};
+pub use backend::{BackendAlloc, BackendSlice, BackendSliceF};
+pub use dtype::{DType, WithDType, WithDTypeT};
 pub use shape::{Dim, Shape, D};
 pub use tensor::Tensor;
 pub use tensor_view::{TensorOrView, TensorView};
 
-pub type TensorS<T> = Tensor<'static, T>;
+pub type TensorS<T, B> = Tensor<'static, T, B>;

@@ -1,14 +1,14 @@
-use crate::{shape::Dim, Shape, Tensor, TensorView, WithDType};
+use crate::{shape::Dim, BackendSlice, Shape, Tensor, TensorView, WithDType};
 use anyhow::Result;
 
-pub struct Cache<'a, T: WithDType> {
-    all_data: Tensor<'a, T>,
+pub struct Cache<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
+    all_data: Tensor<'a, T, B>,
     dim: usize,
     current_seq_len: usize,
     max_seq_len: usize,
 }
 
-impl<'a, T: WithDType> Cache<'a, T> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> Cache<'a, T, B> {
     pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;
@@ -29,16 +29,16 @@ impl<'a, T: WithDType> Cache<'a, T> {
         self.max_seq_len
     }
 
-    pub fn all_data(&self) -> &Tensor<'a, T> {
+    pub fn all_data(&self) -> &Tensor<'a, T, B> {
         &self.all_data
     }
 
-    pub fn current_data(&self) -> Result<TensorView<'_, T>> {
+    pub fn current_data(&self) -> Result<TensorView<'_, T, B>> {
         let view = TensorView::from(&self.all_data);
         view.narrow(self.dim, 0, Some(self.current_seq_len))
     }
 
-    pub fn append(&mut self, src: &Tensor<'_, T>) -> Result<()> {
+    pub fn append(&mut self, src: &Tensor<'_, T, B>) -> Result<()> {
         let seq_len = src.dim(self.dim)?;
         if self.current_seq_len + seq_len > self.max_seq_len {
             anyhow::bail!(
@@ -53,12 +53,12 @@ impl<'a, T: WithDType> Cache<'a, T> {
     }
 }
 
-pub struct KvCache<'a, T: WithDType> {
-    k: Cache<'a, T>,
-    v: Cache<'a, T>,
+pub struct KvCache<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
+    k: Cache<'a, T, B>,
+    v: Cache<'a, T, B>,
 }
 
-impl<'a, T: WithDType> KvCache<'a, T> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> KvCache<'a, T, B> {
     pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;
@@ -67,19 +67,19 @@ impl<'a, T: WithDType> KvCache<'a, T> {
         Ok(Self { k, v })
     }
 
-    pub fn k(&self) -> &Cache<'a, T> {
+    pub fn k(&self) -> &Cache<'a, T, B> {
         &self.k
     }
 
-    pub fn v(&self) -> &Cache<'a, T> {
+    pub fn v(&self) -> &Cache<'a, T, B> {
         &self.v
     }
 
     pub fn append<'b>(
         &'b mut self,
-        k: &Tensor<'_, T>,
-        v: &Tensor<'_, T>,
-    ) -> Result<(TensorView<'b, T>, TensorView<'b, T>)> {
+        k: &Tensor<'_, T, B>,
+        v: &Tensor<'_, T, B>,
+    ) -> Result<(TensorView<'b, T, B>, TensorView<'b, T, B>)> {
         self.k.append(k)?;
         self.v.append(v)?;
         let k = self.k.current_data()?;
