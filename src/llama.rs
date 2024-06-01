@@ -1,4 +1,4 @@
-use crate::{tensor, BackendAlloc, BackendSliceF, Shape, Tensor};
+use crate::{tensor, BackendF, Shape, Tensor};
 use anyhow::Result;
 
 type TensorS<B> = crate::TensorS<f32, B>;
@@ -38,7 +38,7 @@ impl Config {
     }
 }
 
-struct Linear<B: ?Sized + BackendSliceF<f32> + 'static> {
+struct Linear<B: BackendF<f32> + 'static> {
     w: TensorS<B>,
     #[allow(unused)]
     in_c: usize,
@@ -46,7 +46,7 @@ struct Linear<B: ?Sized + BackendSliceF<f32> + 'static> {
     out_c: usize,
 }
 
-impl<B: ?Sized + BackendSliceF<f32>> Linear<B> {
+impl<B: BackendF<f32>> Linear<B> {
     fn new(w: TensorS<B>, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
@@ -66,18 +66,17 @@ impl<B: ?Sized + BackendSliceF<f32>> Linear<B> {
     }
 }
 
-struct RmsNorm<B: ?Sized + BackendSliceF<f32>> {
+struct RmsNorm<B: BackendF<f32>> {
     alpha: TensorS<B>,
     eps: f32,
-    dim_m1: usize,
 }
 
-impl<B: ?Sized + BackendSliceF<f32>> RmsNorm<B> {
+impl<B: BackendF<f32>> RmsNorm<B> {
     fn new(w: TensorS<B>, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
         }
-        Ok(Self { alpha: w, dim_m1, eps })
+        Ok(Self { alpha: w, eps })
     }
 
     fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f32, B>) -> Result<Tensor<'a, f32, B>> {
@@ -87,21 +86,17 @@ impl<B: ?Sized + BackendSliceF<f32>> RmsNorm<B> {
     }
 
     fn fwd_inplace(&self, dst: &mut Tensor<'_, f32, B>, src: &Tensor<'_, f32, B>) -> Result<()> {
-        let alpha = self.alpha.data();
-        let src = src.data();
-        let dst = dst.data_mut();
-        let dim_m1 = self.dim_m1;
-        dst.rms_norm(src, alpha, dim_m1, self.eps)
+        dst.rms_norm(src, &self.alpha, self.eps)
     }
 }
 
-struct Mlp<B: ?Sized + BackendSliceF<f32>> {
+struct Mlp<B: BackendF<f32>> {
     c_fc1: Linear<B>,
     c_fc2: Linear<B>,
     c_proj: Linear<B>,
 }
 
-struct Attention<B: ?Sized + BackendSliceF<f32>> {
+struct Attention<B: BackendF<f32>> {
     q_proj: Linear<B>,
     k_proj: Linear<B>,
     v_proj: Linear<B>,
@@ -109,14 +104,14 @@ struct Attention<B: ?Sized + BackendSliceF<f32>> {
     head_dim: usize,
 }
 
-struct Layer<B: ?Sized + BackendSliceF<f32>> {
+struct Layer<B: BackendF<f32>> {
     rms1: RmsNorm<B>,
     attn: Attention<B>,
     rms2: RmsNorm<B>,
     mlp: Mlp<B>,
 }
 
-pub struct Model<B: ?Sized + BackendSliceF<f32>> {
+pub struct Model<B: BackendF<f32>> {
     embedding: TensorS<B>,
     layers: Vec<Layer<B>>,
     ln_f: RmsNorm<B>,
@@ -124,21 +119,21 @@ pub struct Model<B: ?Sized + BackendSliceF<f32>> {
     config: Config,
 }
 
-pub struct State<B: ?Sized + BackendSliceF<f32>> {
+pub struct State<B: BackendF<f32>> {
     xs: TensorS<B>,
-    fc1_xs: B::Allocated,
-    fc2_xs: B::Allocated,
-    rms_xs: B::Allocated,
-    attn_q: B::Allocated,
-    attn_k: B::Allocated,
-    attn_v: B::Allocated,
-    attn_q_t: B::Allocated,
-    attn_k_t: B::Allocated,
-    attn_v_t: B::Allocated,
-    attn_sm: B::Allocated,
-    attn_scores: B::Allocated,
-    attn_xs: B::Allocated,
-    attn_xs_t: B::Allocated,
+    fc1_xs: B,
+    fc2_xs: B,
+    rms_xs: B,
+    attn_q: B,
+    attn_k: B,
+    attn_v: B,
+    attn_q_t: B,
+    attn_k_t: B,
+    attn_v_t: B,
+    attn_sm: B,
+    attn_scores: B,
+    attn_xs: B,
+    attn_xs_t: B,
     logits: TensorS<B>,
     cos: TensorS<B>,
     sin: TensorS<B>,
@@ -146,25 +141,25 @@ pub struct State<B: ?Sized + BackendSliceF<f32>> {
     kv_caches: Vec<crate::kv_cache::KvCache<'static, f32, B>>,
 }
 
-impl<B: ?Sized + BackendSliceF<f32>> State<B> {
+impl<B: BackendF<f32>> State<B> {
     pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
         let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
         let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let fc1_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let fc2_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let rms_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_xs = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
-        let attn_xs_t = B::Allocated::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
-        let attn_scores = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_sm = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_q = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_q_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let fc1_xs = B::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
+        let fc2_xs = B::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
+        let rms_xs = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_xs = B::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
+        let attn_xs_t = B::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
+        let attn_scores = B::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_sm = B::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_q = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_q_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v_t = B::cst(0., b_sz * seq_len * cfg.dim)?;
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
@@ -217,7 +212,7 @@ impl<B: ?Sized + BackendSliceF<f32>> State<B> {
     }
 }
 
-impl<B: ?Sized + BackendSliceF<f32>> Model<B> {
+impl<B: BackendF<f32>> Model<B> {
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -232,63 +227,62 @@ impl<B: ?Sized + BackendSliceF<f32>> Model<B> {
         }
         let h = self.config.n_heads;
         let d = self.config.dim / h;
-        state.xs.data_mut().index_select(self.embedding.data(), tokens, self.config.dim)?;
+        state.xs.index_select(&self.embedding, tokens)?;
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             {
                 let attn_xs = {
-                    let rms_xs = layer.rms1.fwd(state.rms_xs.slice_mut(), &state.xs)?;
+                    let rms_xs = layer.rms1.fwd(&mut state.rms_xs, &state.xs)?;
                     // Attention
-                    let mut attn_q = layer.attn.q_proj.fwd(state.attn_q.slice_mut(), &rms_xs)?;
-                    let mut attn_k = layer.attn.k_proj.fwd(state.attn_k.slice_mut(), &rms_xs)?;
-                    let mut attn_v = layer.attn.v_proj.fwd(state.attn_v.slice_mut(), &rms_xs)?;
+                    let mut attn_q = layer.attn.q_proj.fwd(&mut state.attn_q, &rms_xs)?;
+                    let mut attn_k = layer.attn.k_proj.fwd(&mut state.attn_k, &rms_xs)?;
+                    let mut attn_v = layer.attn.v_proj.fwd(&mut state.attn_v, &rms_xs)?;
 
                     attn_q.reshape((b_sz, seq_len, h, d))?;
-                    let mut attn_q = attn_q.transpose(state.attn_q_t.slice_mut(), 1, 2)?;
+                    let mut attn_q = attn_q.transpose(&mut state.attn_q_t, 1, 2)?;
                     attn_q.rope_i(&state.cos, &state.sin, pos)?;
                     attn_q.reshape((b_sz * h, seq_len, d))?;
 
                     attn_k.reshape((b_sz, seq_len, h, d))?;
-                    let mut attn_k = attn_k.transpose(state.attn_k_t.slice_mut(), 1, 2)?;
+                    let mut attn_k = attn_k.transpose(&mut state.attn_k_t, 1, 2)?;
                     attn_k.rope_i(&state.cos, &state.sin, pos)?;
 
                     attn_v.reshape((b_sz, seq_len, h, d))?;
-                    let attn_v = attn_v.transpose(state.attn_v_t.slice_mut(), 1, 2)?;
+                    let attn_v = attn_v.transpose(&mut state.attn_v_t, 1, 2)?;
                     // kv-cache
                     let (k, v) = state.kv_caches[layer_idx].append(&attn_k, &attn_v)?;
                     let k = k.flatten(0, 1)?;
                     let v = v.flatten(0, 1)?;
                     // TODO: repeat-kv
                     let mut attn_scores =
-                        tensor::matmul(state.attn_scores.slice_mut(), &attn_q, &k, true)?;
+                        tensor::matmul(&mut state.attn_scores, &attn_q, &k, true)?;
                     attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt())?;
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
-                    let attn_sm = attn_scores.softmax(state.attn_sm.slice_mut())?;
+                    let attn_sm = attn_scores.softmax(&mut state.attn_sm)?;
                     // get values, attn_sm has shape (b, h, t, t), v has shape (b, h, t, d)
-                    let mut attn_xs =
-                        tensor::matmul(state.attn_xs.slice_mut(), &attn_sm, &v, false)?;
+                    let mut attn_xs = tensor::matmul(&mut state.attn_xs, &attn_sm, &v, false)?;
                     attn_xs.reshape((b_sz, h, seq_len, d))?;
-                    let mut attn_xs = attn_xs.transpose(state.attn_xs_t.slice_mut(), 1, 2)?;
+                    let mut attn_xs = attn_xs.transpose(&mut state.attn_xs_t, 1, 2)?;
                     attn_xs.reshape((b_sz, seq_len, h * d))?;
                     attn_xs
                 };
-                let o = layer.attn.o_proj.fwd(state.rms_xs.slice_mut(), &attn_xs)?;
+                let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
                 state.xs.add(&o)?;
             }
 
             {
-                let rms_xs = layer.rms2.fwd(state.rms_xs.slice_mut(), &state.xs)?;
+                let rms_xs = layer.rms2.fwd(&mut state.rms_xs, &state.xs)?;
                 // MLP
-                let mut fc1_xs = layer.mlp.c_fc1.fwd(state.fc1_xs.slice_mut(), &rms_xs)?;
-                let fc2_xs = layer.mlp.c_fc2.fwd(state.fc2_xs.slice_mut(), &rms_xs)?;
+                let mut fc1_xs = layer.mlp.c_fc1.fwd(&mut state.fc1_xs, &rms_xs)?;
+                let fc2_xs = layer.mlp.c_fc2.fwd(&mut state.fc2_xs, &rms_xs)?;
                 fc1_xs.silu()?;
                 fc1_xs.mult(&fc2_xs)?;
-                let o = layer.mlp.c_proj.fwd(state.rms_xs.slice_mut(), &fc1_xs)?;
+                let o = layer.mlp.c_proj.fwd(&mut state.rms_xs, &fc1_xs)?;
                 state.xs.add(&o)?;
             }
         }
-        let rms_xs = self.ln_f.fwd(state.rms_xs.slice_mut(), &state.xs)?;
+        let rms_xs = self.ln_f.fwd(&mut state.rms_xs, &state.xs)?;
         self.lm_head.fwd_inplace(&mut state.logits, &rms_xs)?;
         Ok(())
     }

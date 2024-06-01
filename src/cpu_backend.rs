@@ -1,72 +1,35 @@
-use crate::{WithDType, WithDTypeT};
+use crate::{WithDType, WithDTypeF};
 use anyhow::Result;
 use rayon::prelude::*;
 
-impl<T: WithDType> crate::BackendAlloc<T> for Vec<T> {
-    type Slice = [T];
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn slice(&self) -> &Self::Slice {
-        self.as_slice()
-    }
-    fn slice_mut(&mut self) -> &mut Self::Slice {
-        self.as_mut_slice()
-    }
+impl<T: WithDType> crate::Backend<T> for Vec<T> {
+    type Device = ();
 
     unsafe fn alloc_uninit(len: usize) -> Result<Self> {
         Ok(vec![T::zero(); len])
     }
 
-    fn cst(v: T, len: usize) -> Result<Self> {
-        Ok(vec![v; len])
-    }
-
     fn from_vec(v: Vec<T>) -> Result<Self> {
         Ok(v)
     }
-}
-
-impl<T: WithDType> crate::BackendSlice<T> for [T] {
-    type Device = ();
-    type Allocated = Vec<T>;
 
     fn device(&self) -> &Self::Device {
         &()
     }
 
-    fn add_assign(&mut self, s: &Self) -> Result<()> {
-        s.iter().zip(self.iter_mut()).for_each(|(src, dst)| *dst += *src);
+    fn add_assign(&mut self, s: &Self, l: usize) -> Result<()> {
+        s[..l].iter().zip(self[..l].iter_mut()).for_each(|(src, dst)| *dst += *src);
         Ok(())
     }
 
-    fn mul_assign(&mut self, s: &Self) -> Result<()> {
-        s.iter().zip(self.iter_mut()).for_each(|(src, dst)| *dst *= *src);
+    fn mul_assign(&mut self, s: &Self, l: usize) -> Result<()> {
+        s[..l].iter().zip(self[..l].iter_mut()).for_each(|(src, dst)| *dst *= *src);
         Ok(())
     }
 
-    fn scale(&mut self, m: T) -> Result<()> {
-        self.iter_mut().for_each(|v| *v *= m);
+    fn scale(&mut self, m: T, l: usize) -> Result<()> {
+        self[..l].iter_mut().for_each(|v| *v *= m);
         Ok(())
-    }
-
-    fn index(&self, a: Option<usize>, b: Option<usize>) -> &Self {
-        match (a, b) {
-            (None, None) => self,
-            (Some(a), None) => &self[a..],
-            (None, Some(b)) => &self[..b],
-            (Some(a), Some(b)) => &self[a..b],
-        }
-    }
-
-    fn index_mut(&mut self, a: Option<usize>, b: Option<usize>) -> &mut Self {
-        match (a, b) {
-            (None, None) => self,
-            (Some(a), None) => &mut self[a..],
-            (None, Some(b)) => &mut self[..b],
-            (Some(a), Some(b)) => &mut self[a..b],
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -129,12 +92,12 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
         Ok(())
     }
 
-    fn copy(&self) -> Result<Self::Allocated> {
-        Ok(self.to_vec())
+    fn copy(&self, l: usize) -> Result<Self> {
+        Ok(self[..l].to_vec())
     }
 
-    fn fill(&mut self, v: T) -> Result<()> {
-        self.fill(v);
+    fn fill(&mut self, v: T, l: usize) -> Result<()> {
+        self[..l].fill(v);
         Ok(())
     }
 
@@ -150,10 +113,13 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
         h: usize,
         t: usize,
         d: usize,
+        pos: usize,
     ) -> Result<()> {
         if self.len() != b * h * t * d {
             anyhow::bail!("rope unexpected size for dst {} {b} {h} {t} {d}", self.len())
         }
+        let cos = &cos[pos * d / 2..];
+        let sin = &sin[pos * d / 2..];
         self.par_chunks_mut(t * d).for_each(|dst| {
             for i_t in 0..t {
                 for i_d in 0..d / 2 {
@@ -178,10 +144,13 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
         h: usize,
         t: usize,
         d: usize,
+        pos: usize,
     ) -> Result<()> {
         if self.len() != b * h * t * d {
             anyhow::bail!("rope-i unexpected size for dst {} {b} {h} {t} {d}", self.len())
         }
+        let cos = &cos[pos * d / 2..];
+        let sin = &sin[pos * d / 2..];
         self.par_chunks_mut(t * d).for_each(|dst| {
             for i_over_2 in 0..t * d / 2 {
                 let i = 2 * i_over_2;
@@ -195,8 +164,8 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
 
     fn gemm(
         &mut self,
-        lhs: &Self,
-        rhs: &Self,
+        (lhs, lhs_o): (&Self, usize),
+        (rhs, rhs_o): (&Self, usize),
         m: usize,
         n: usize,
         k: usize,
@@ -206,6 +175,8 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
         (lhs_cs, lhs_rs): (usize, usize),
         (rhs_cs, rhs_rs): (usize, usize),
     ) -> Result<()> {
+        let lhs = &lhs[lhs_o..];
+        let rhs = &rhs[rhs_o..];
         for b_idx in 0..lhs_b {
             let dst = &mut self[b_idx * m * n..(b_idx + 1) * m * n];
             let lhs = &lhs[b_idx * m * k..(b_idx + 1) * m * k];
@@ -246,23 +217,23 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
     }
 }
 
-impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
-    fn cos(&mut self) -> Result<()> {
-        for d in self.iter_mut() {
+impl<T: WithDTypeF> crate::BackendF<T> for Vec<T> {
+    fn cos(&mut self, l: usize) -> Result<()> {
+        for d in self[..l].iter_mut() {
             *d = d.cos();
         }
         Ok(())
     }
 
-    fn sin(&mut self) -> Result<()> {
-        for d in self.iter_mut() {
+    fn sin(&mut self, l: usize) -> Result<()> {
+        for d in self[..l].iter_mut() {
             *d = d.sin();
         }
         Ok(())
     }
 
-    fn silu(&mut self) -> Result<()> {
-        for d in self.iter_mut() {
+    fn silu(&mut self, l: usize) -> Result<()> {
+        for d in self[..l].iter_mut() {
             *d /= T::one() + (T::zero() - *d).exp()
         }
         Ok(())
@@ -279,8 +250,10 @@ impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
         Ok(())
     }
 
-    fn softmax(&mut self, src: &Self, dim_m1: usize) -> Result<()> {
-        src.par_chunks(dim_m1).zip(self.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
+    fn softmax(&mut self, src: &Self, dim_m1: usize, d: usize) -> Result<()> {
+        let src = &src[..d * dim_m1];
+        let dst = &mut self[..d * dim_m1];
+        src.par_chunks(dim_m1).zip(dst.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
             let mut max = T::neg_infinity();
             for &v in src.iter() {
                 max = T::max(v, max)
@@ -288,7 +261,7 @@ impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
             for (s, d) in src.iter().zip(dst.iter_mut()) {
                 *d = (*s - max).exp();
             }
-            let sum_exp = dst.iter().map(|v| <T as WithDTypeT>::to_f32(*v)).sum::<f32>();
+            let sum_exp = dst.iter().map(|v| <T as WithDTypeF>::to_f32(*v)).sum::<f32>();
             for d in dst.iter_mut() {
                 *d = T::from_f32(d.to_f32() / sum_exp)
             }
@@ -296,8 +269,17 @@ impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
         Ok(())
     }
 
-    fn rms_norm(&mut self, src: &Self, alpha: &Self, dim_m1: usize, eps: f32) -> Result<()> {
-        src.par_chunks(dim_m1).zip(self.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
+    fn rms_norm(
+        &mut self,
+        src: &Self,
+        alpha: &Self,
+        dim_m1: usize,
+        d: usize,
+        eps: f32,
+    ) -> Result<()> {
+        let src = &src[..d * dim_m1];
+        let dst = &mut self[..d * dim_m1];
+        src.par_chunks(dim_m1).zip(dst.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
             let sum2 = src.iter().map(|&v| v.to_f32() * v.to_f32()).sum::<f32>();
             let m = (sum2 / dim_m1 as f32 + eps).sqrt();
             for ((d, s), alpha) in dst.iter_mut().zip(src.iter()).zip(alpha) {

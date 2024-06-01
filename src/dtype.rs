@@ -11,7 +11,7 @@ pub trait WithDType: Sized + Copy + num_traits::NumAssign + 'static + Clone + Se
     const DTYPE: DType;
 }
 
-pub trait WithDTypeT: WithDType + num_traits::Float {
+pub trait WithDTypeF: WithDType + num_traits::Float {
     fn to_f32(self) -> f32;
     fn from_f32(v: f32) -> Self;
 }
@@ -20,7 +20,7 @@ impl WithDType for f16 {
     const DTYPE: DType = DType::F16;
 }
 
-impl WithDTypeT for f16 {
+impl WithDTypeF for f16 {
     fn to_f32(self) -> f32 {
         f16::to_f32(self)
     }
@@ -34,7 +34,7 @@ impl WithDType for bf16 {
     const DTYPE: DType = DType::BF16;
 }
 
-impl WithDTypeT for bf16 {
+impl WithDTypeF for bf16 {
     fn to_f32(self) -> f32 {
         bf16::to_f32(self)
     }
@@ -48,7 +48,7 @@ impl WithDType for f32 {
     const DTYPE: DType = DType::F32;
 }
 
-impl WithDTypeT for f32 {
+impl WithDTypeF for f32 {
     fn to_f32(self) -> f32 {
         self
     }

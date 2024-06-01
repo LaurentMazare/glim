@@ -1,25 +1,24 @@
-use crate::{shape::Dim, BackendSlice, Shape, Tensor, WithDType};
+use crate::{shape::Dim, Backend, Shape, Tensor, WithDType};
 use anyhow::Result;
 
 #[derive(Clone)]
-pub struct TensorView<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
+pub struct TensorView<'a, T: WithDType, B: Backend<T>> {
     inner: &'a Tensor<'a, T, B>,
     shape: Shape,
     strides: Vec<usize>,
     start_offset: usize,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> From<&'a Tensor<'a, T, B>>
-    for TensorView<'a, T, B>
-{
+impl<'a, T: WithDType, B: Backend<T>> From<&'a Tensor<'a, T, B>> for TensorView<'a, T, B> {
     fn from(inner: &'a Tensor<'a, T, B>) -> Self {
         let shape = inner.shape().clone();
         let strides = shape.stride_contiguous();
-        Self { inner, shape, strides, start_offset: 0 }
+        Self { inner, shape, strides, start_offset: 0, _phantom: Default::default() }
     }
 }
 
-impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
+impl<'a, T: WithDType, B: Backend<T>> TensorView<'a, T, B> {
     pub fn start_offset(&self) -> usize {
         self.start_offset
     }
@@ -28,8 +27,8 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
         self.inner
     }
 
-    pub fn data(&self) -> &B {
-        self.inner.data().index(Some(self.start_offset), None)
+    pub fn data(&self) -> (&B, usize) {
+        (self.inner.data().0, self.start_offset)
     }
 
     pub fn shape(&self) -> &Shape {
@@ -80,6 +79,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
             shape: dst_dims.into(),
             strides: dst_strides,
             start_offset: self.start_offset,
+            _phantom: Default::default(),
         })
     }
 
@@ -100,6 +100,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
             shape: dst_dims.into(),
             strides: dst_strides,
             start_offset: self.start_offset,
+            _phantom: Default::default(),
         })
     }
 
@@ -116,6 +117,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
             start_offset: self.start_offset + self.strides[dim] * start,
             shape: Shape::from(dims),
             strides: self.strides.clone(),
+            _phantom: Default::default(),
         })
     }
 
@@ -131,6 +133,7 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
             strides,
             start_offset: self.start_offset,
             inner: self.inner,
+            _phantom: Default::default(),
         })
     }
 
@@ -157,14 +160,15 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorView<'a, T, B> {
             strides: perm_strides,
             start_offset: self.start_offset,
             inner: self.inner,
+            _phantom: Default::default(),
         })
     }
 }
 
-pub trait TensorOrView<T: WithDType, B: ?Sized + BackendSlice<T>> {
+pub trait TensorOrView<T: WithDType, B: Backend<T>> {
     fn shape(&self) -> &Shape;
     fn strides(&self) -> std::borrow::Cow<'_, [usize]>;
-    fn data(&self) -> &B;
+    fn data(&self) -> (&B, usize);
     fn rank(&self) -> usize {
         self.shape().rank()
     }
@@ -173,13 +177,13 @@ pub trait TensorOrView<T: WithDType, B: ?Sized + BackendSlice<T>> {
     }
 }
 
-impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorOrView<T, B> for Tensor<'a, T, B> {
+impl<'a, T: WithDType, B: Backend<T>> TensorOrView<T, B> for Tensor<'a, T, B> {
     fn shape(&self) -> &Shape {
         self.shape()
     }
 
-    fn data(&self) -> &B {
-        self.data()
+    fn data(&self) -> (&B, usize) {
+        (self.storage(), 0)
     }
 
     fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
@@ -187,11 +191,11 @@ impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorOrView<T, B> for Tenso
     }
 }
 
-impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> TensorOrView<T, B> for TensorView<'a, T, B> {
+impl<'a, T: WithDType, B: Backend<T>> TensorOrView<T, B> for TensorView<'a, T, B> {
     fn shape(&self) -> &Shape {
         self.shape()
     }
-    fn data(&self) -> &B {
+    fn data(&self) -> (&B, usize) {
         self.inner.data()
     }
     fn strides(&self) -> std::borrow::Cow<'_, [usize]> {

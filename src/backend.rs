@@ -1,44 +1,32 @@
 use anyhow::Result;
 
-pub trait BackendAlloc<T: crate::WithDType>: Sized + 'static {
-    type Slice: ?Sized;
+pub trait Backend<T: crate::WithDType>: Sized + 'static {
+    type Device;
 
     fn len(&self) -> usize;
+
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    fn slice(&self) -> &Self::Slice;
-    fn slice_mut(&mut self) -> &mut Self::Slice;
 
     /// # Safety
     /// This function allocates an unitialized block of memory. It is the responsibility of the
     /// caller to set the memory before using or returning the block.
     unsafe fn alloc_uninit(len: usize) -> Result<Self>;
-    fn cst(v: T, len: usize) -> Result<Self>;
     fn from_vec(v: Vec<T>) -> Result<Self>;
-}
-
-pub trait BackendSlice<T: crate::WithDType>: 'static {
-    type Device;
-    type Allocated: BackendAlloc<T, Slice = Self>;
-
-    fn len(&self) -> usize;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+    fn cst(v: T, len: usize) -> Result<Self> {
+        let mut res = unsafe { Self::alloc_uninit(len)? };
+        res.fill(v, len)?;
+        Ok(res)
     }
 
     fn device(&self) -> &Self::Device;
-    fn fill(&mut self, elem: T) -> Result<()>;
+    fn fill(&mut self, elem: T, len: usize) -> Result<()>;
+    fn copy(&self, len: usize) -> Result<Self>;
 
-    fn copy(&self) -> Result<Self::Allocated>;
-    fn index(&self, a: Option<usize>, b: Option<usize>) -> &Self;
-    fn index_mut(&mut self, a: Option<usize>, b: Option<usize>) -> &mut Self;
-
-    fn add_assign(&mut self, s: &Self) -> Result<()>;
-    fn mul_assign(&mut self, s: &Self) -> Result<()>;
-    fn scale(&mut self, v: T) -> Result<()>;
+    fn add_assign(&mut self, s: &Self, len: usize) -> Result<()>;
+    fn mul_assign(&mut self, s: &Self, len: usize) -> Result<()>;
+    fn scale(&mut self, v: T, len: usize) -> Result<()>;
 
     fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()>;
 
@@ -54,14 +42,35 @@ pub trait BackendSlice<T: crate::WithDType>: 'static {
         src_o: usize,
     ) -> Result<()>;
 
-    fn rope(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
-    fn rope_i(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
+    fn rope(
+        &mut self,
+        _: &Self,
+        _: &Self,
+        b: usize,
+        h: usize,
+        t: usize,
+        d: usize,
+        pos: usize,
+    ) -> Result<()>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn rope_i(
+        &mut self,
+        _: &Self,
+        _: &Self,
+        b: usize,
+        h: usize,
+        t: usize,
+        d: usize,
+        pos: usize,
+    ) -> Result<()>;
 
     #[allow(clippy::too_many_arguments)]
     fn gemm(
         &mut self,
-        lhs: &Self,
-        rhs: &Self,
+        lhs: (&Self, usize),
+        rhs: (&Self, usize),
         m: usize,
         n: usize,
         k: usize,
@@ -75,11 +84,18 @@ pub trait BackendSlice<T: crate::WithDType>: 'static {
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()>;
 }
 
-pub trait BackendSliceF<T: crate::WithDType + num_traits::Float>: BackendSlice<T> {
-    fn cos(&mut self) -> Result<()>;
-    fn sin(&mut self) -> Result<()>;
-    fn silu(&mut self) -> Result<()>;
+pub trait BackendF<T: crate::WithDTypeF>: Backend<T> {
+    fn cos(&mut self, len: usize) -> Result<()>;
+    fn sin(&mut self, len: usize) -> Result<()>;
+    fn silu(&mut self, len: usize) -> Result<()>;
     fn apply_causality_mask(&mut self, bh: usize, t1: usize, t2: usize) -> Result<()>;
-    fn softmax(&mut self, src: &Self, dim_m1: usize) -> Result<()>;
-    fn rms_norm(&mut self, src: &Self, alpha: &Self, dim_m1: usize, eps: f32) -> Result<()>;
+    fn softmax(&mut self, src: &Self, dim_m1: usize, d: usize) -> Result<()>;
+    fn rms_norm(
+        &mut self,
+        src: &Self,
+        alpha: &Self,
+        dim_m1: usize,
+        d: usize,
+        eps: f32,
+    ) -> Result<()>;
 }

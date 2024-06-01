@@ -26,8 +26,8 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
-        let prs = state.logits().softmax(prs.as_mut_slice())?;
-        let distr = rand::distributions::WeightedIndex::new(prs.data())?;
+        let prs = state.logits().softmax(&mut prs)?;
+        let distr = rand::distributions::WeightedIndex::new(prs.storage())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);
     }
