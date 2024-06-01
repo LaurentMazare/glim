@@ -1,14 +1,14 @@
 use crate::{shape::Dim, BackendSlice, Shape, Tensor, TensorView, WithDType};
 use anyhow::Result;
 
-pub struct Cache<'a, T: WithDType, B: BackendSlice<T>> {
+pub struct Cache<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
     all_data: Tensor<'a, T, B>,
     dim: usize,
     current_seq_len: usize,
     max_seq_len: usize,
 }
 
-impl<'a, T: WithDType, B: BackendSlice<T>> Cache<'a, T, B> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> Cache<'a, T, B> {
     pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;
@@ -53,12 +53,12 @@ impl<'a, T: WithDType, B: BackendSlice<T>> Cache<'a, T, B> {
     }
 }
 
-pub struct KvCache<'a, T: WithDType, B: BackendSlice<T>> {
+pub struct KvCache<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
     k: Cache<'a, T, B>,
     v: Cache<'a, T, B>,
 }
 
-impl<'a, T: WithDType, B: BackendSlice<T>> KvCache<'a, T, B> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> KvCache<'a, T, B> {
     pub fn new<S: Into<Shape>, D: Dim>(dim: D, shape: S) -> Result<Self> {
         let shape = shape.into();
         let dim = dim.to_index(&shape, "kv-cache")?;

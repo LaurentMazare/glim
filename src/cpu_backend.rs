@@ -18,6 +18,14 @@ impl<T: WithDType> crate::BackendAlloc<T> for Vec<T> {
     unsafe fn alloc_uninit(len: usize) -> Result<Self> {
         Ok(vec![T::zero(); len])
     }
+
+    fn cst(v: T, len: usize) -> Result<Self> {
+        Ok(vec![v; len])
+    }
+
+    fn from_vec(v: Vec<T>) -> Result<Self> {
+        Ok(v)
+    }
 }
 
 impl<T: WithDType> crate::BackendSlice<T> for [T] {
@@ -41,6 +49,24 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
     fn scale(&mut self, m: T) -> Result<()> {
         self.iter_mut().for_each(|v| *v *= m);
         Ok(())
+    }
+
+    fn index(&self, a: Option<usize>, b: Option<usize>) -> &Self {
+        match (a, b) {
+            (None, None) => self,
+            (Some(a), None) => &self[a..],
+            (None, Some(b)) => &self[..b],
+            (Some(a), Some(b)) => &self[a..b],
+        }
+    }
+
+    fn index_mut(&mut self, a: Option<usize>, b: Option<usize>) -> &mut Self {
+        match (a, b) {
+            (None, None) => self,
+            (Some(a), None) => &mut self[a..],
+            (None, Some(b)) => &mut self[..b],
+            (Some(a), Some(b)) => &mut self[a..b],
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -210,6 +236,14 @@ impl<T: WithDType> crate::BackendSlice<T> for [T] {
         }
         Ok(())
     }
+
+    fn index_select(&mut self, src: &Self, ids: &[u32], h: usize) -> Result<()> {
+        for (i, id) in ids.iter().enumerate() {
+            let id = *id as usize;
+            self[i * h..(i + 1) * h].copy_from_slice(&src[id * h..(id + 1) * h]);
+        }
+        Ok(())
+    }
 }
 
 impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
@@ -257,6 +291,17 @@ impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
             let sum_exp = dst.iter().map(|v| <T as WithDTypeT>::to_f32(*v)).sum::<f32>();
             for d in dst.iter_mut() {
                 *d = T::from_f32(d.to_f32() / sum_exp)
+            }
+        });
+        Ok(())
+    }
+
+    fn rms_norm(&mut self, src: &Self, alpha: &Self, dim_m1: usize, eps: f32) -> Result<()> {
+        src.par_chunks(dim_m1).zip(self.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
+            let sum2 = src.iter().map(|&v| v.to_f32() * v.to_f32()).sum::<f32>();
+            let m = (sum2 / dim_m1 as f32 + eps).sqrt();
+            for ((d, s), alpha) in dst.iter_mut().zip(src.iter()).zip(alpha) {
+                *d = T::from_f32((*s).to_f32() / m * (*alpha).to_f32())
             }
         });
         Ok(())

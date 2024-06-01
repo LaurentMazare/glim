@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
 
     let config = glim::llama::Config::tiny_15m();
-    let mut prs = glim::cpu_backend::Storage::cst(0., config.vocab_size)?;
+    let mut prs = vec![0f32; config.vocab_size];
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
     let model = glim::llama::Model::new(config, "stories15M.safetensors")?;
     let mut state = glim::llama::State::new(1, model.config())?;
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
-        let prs = state.logits().softmax(&mut prs)?;
+        let prs = state.logits().softmax(prs.as_mut_slice())?;
         let distr = rand::distributions::WeightedIndex::new(prs.data())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);

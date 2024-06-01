@@ -1,12 +1,12 @@
 use crate::{BackendAlloc, BackendSlice, BackendSliceF, Dim, Shape, WithDType, WithDTypeT};
 use anyhow::Result;
 
-pub enum CowMut<'a, T: WithDType, B: BackendSlice<T>> {
+pub enum CowMut<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
     Owned(B::Allocated),
     Borrowed(&'a mut B),
 }
 
-impl<'a, T: WithDType, B: BackendSlice<T>> CowMut<'a, T, B> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> CowMut<'a, T, B> {
     fn as_ref(&self) -> &B {
         match self {
             Self::Owned(o) => o.slice(),
@@ -15,7 +15,7 @@ impl<'a, T: WithDType, B: BackendSlice<T>> CowMut<'a, T, B> {
     }
 }
 
-impl<'a, T: WithDType, B: BackendSlice<T>> CowMut<'a, T, B> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> CowMut<'a, T, B> {
     fn as_mut_ref(&mut self) -> &mut B {
         match self {
             Self::Owned(o) => o.slice_mut(),
@@ -25,12 +25,12 @@ impl<'a, T: WithDType, B: BackendSlice<T>> CowMut<'a, T, B> {
 }
 
 // TODO: separate type for StridedTensor? (cannot be owned)
-pub struct Tensor<'a, T: WithDType, B: BackendSlice<T>> {
+pub struct Tensor<'a, T: WithDType, B: ?Sized + BackendSlice<T>> {
     data: CowMut<'a, T, B>,
     shape: Shape,
 }
 
-impl<'a, T: WithDType, B: BackendSlice<T>> Tensor<'a, T, B> {
+impl<'a, T: WithDType, B: ?Sized + BackendSlice<T>> Tensor<'a, T, B> {
     pub fn dtype(&self) -> crate::DType {
         T::DTYPE
     }
@@ -92,11 +92,12 @@ impl<'a, T: WithDType, B: BackendSlice<T>> Tensor<'a, T, B> {
     }
 
     pub fn data_mut(&mut self) -> &mut B {
-        self.data.as_mut_ref()
+        let el_count = self.elem_count();
+        self.data.as_mut_ref().index_mut(None, Some(el_count))
     }
 
     pub fn data(&self) -> &B {
-        self.data.as_ref()
+        self.data.as_ref().index(None, Some(self.elem_count()))
     }
 
     // There is no stride so all tensors are always using the C layout
@@ -156,7 +157,7 @@ impl<'a, T: WithDType, B: BackendSlice<T>> Tensor<'a, T, B> {
         let src_o = 0;
         let dst_s = block_size * self.dims()[dim];
         let src_s = d2;
-        self.data_mut().copy2d(src.data(), d1, d2, dst_s, src_s, dst_o, src_o);
+        self.data_mut().copy2d(src.data(), d1, d2, dst_s, src_s, dst_o, src_o)?;
         Ok(())
     }
 
@@ -180,9 +181,9 @@ impl<'a, T: WithDType, B: BackendSlice<T>> Tensor<'a, T, B> {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        self.data.rope(&cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+        let cos_data = cos.data().index(Some(pos * d / 2), None);
+        let sin_data = sin.data().index(Some(pos * d / 2), None);
+        self.data_mut().rope(cos_data, sin_data, b, h, t, d)
     }
 
     pub fn rope_i(
@@ -200,9 +201,9 @@ impl<'a, T: WithDType, B: BackendSlice<T>> Tensor<'a, T, B> {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
             s => anyhow::bail!("unexpected shape for rope-sin {s:?} (head-dim {d})"),
         };
-        let cos_data = cos.data();
-        let sin_data = sin.data();
-        self.data.rope_i(&cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+        let cos_data = cos.data().index(Some(pos * d / 2), None);
+        let sin_data = sin.data().index(Some(pos * d / 2), None);
+        self.data_mut().rope_i(cos_data, sin_data, b, h, t, d)
     }
 }
 
@@ -219,7 +220,7 @@ impl<'a, T: WithDType + candle::WithDType> Tensor<'a, T> {
     }
 }
 
-impl<'a, T: WithDTypeT, B: BackendSliceF<T>> Tensor<'a, T, B> {
+impl<'a, T: WithDTypeT, B: ?Sized + BackendSliceF<T>> Tensor<'a, T, B> {
     pub fn cos(&mut self) -> Result<()> {
         self.data_mut().cos()
     }
@@ -326,7 +327,7 @@ impl<'a, T: WithDTypeT, B: BackendSliceF<T>> Tensor<'a, T, B> {
 pub fn matmul<
     'a,
     T: WithDTypeT,
-    B: BackendSliceF<T>,
+    B: ?Sized + BackendSliceF<T>,
     V1: crate::TensorOrView<T, B>,
     V2: crate::TensorOrView<T, B>,
 >(
@@ -341,7 +342,7 @@ pub fn matmul<
     Ok(dst)
 }
 
-impl<T: WithDType, B: BackendSlice<T>> Tensor<'static, T, B> {
+impl<T: WithDType, B: ?Sized + BackendSlice<T>> Tensor<'static, T, B> {
     // Create a tensor with an owned storage.
     pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
         let shape: Shape = shape.into();
@@ -356,5 +357,10 @@ impl<T: WithDType, B: BackendSlice<T>> Tensor<'static, T, B> {
             anyhow::bail!("not enough elements in input vector {} for shape {shape:?}", data.len())
         }
         Ok(Self { data: CowMut::Owned(data), shape })
+    }
+
+    pub fn from_vec<S: Into<Shape>>(data: Vec<T>, shape: S) -> Result<Self> {
+        let data = B::Allocated::from_vec(data)?;
+        Self::owned(data, shape)
     }
 }

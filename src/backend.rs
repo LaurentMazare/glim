@@ -11,6 +11,8 @@ pub trait BackendAlloc<T: crate::WithDType>: Sized + 'static {
     /// This function allocates an unitialized block of memory. It is the responsibility of the
     /// caller to set the memory before using or returning the block.
     unsafe fn alloc_uninit(len: usize) -> Result<Self>;
+    fn cst(v: T, len: usize) -> Result<Self>;
+    fn from_vec(v: Vec<T>) -> Result<Self>;
 }
 
 pub trait BackendSlice<T: crate::WithDType>: 'static {
@@ -27,6 +29,8 @@ pub trait BackendSlice<T: crate::WithDType>: 'static {
     fn fill(&mut self, elem: T) -> Result<()>;
 
     fn copy(&self) -> Result<Self::Allocated>;
+    fn index(&self, a: Option<usize>, b: Option<usize>) -> &Self;
+    fn index_mut(&mut self, a: Option<usize>, b: Option<usize>) -> &mut Self;
 
     fn add_assign(&mut self, s: &Self) -> Result<()>;
     fn mul_assign(&mut self, s: &Self) -> Result<()>;
@@ -62,6 +66,8 @@ pub trait BackendSlice<T: crate::WithDType>: 'static {
         _: (usize, usize),
         _: (usize, usize),
     ) -> Result<()>;
+
+    fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()>;
 }
 
 pub trait BackendSliceF<T: crate::WithDType + num_traits::Float>: BackendSlice<T> {
@@ -70,4 +76,5 @@ pub trait BackendSliceF<T: crate::WithDType + num_traits::Float>: BackendSlice<T
     fn silu(&mut self) -> Result<()>;
     fn apply_causality_mask(&mut self, bh: usize, t1: usize, t2: usize) -> Result<()>;
     fn softmax(&mut self, src: &Self, dim_m1: usize) -> Result<()>;
+    fn rms_norm(&mut self, src: &Self, alpha: &Self, dim_m1: usize, eps: f32) -> Result<()>;
 }
