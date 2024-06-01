@@ -1,9 +1,8 @@
-use crate::{tensor, Shape, Tensor};
+use crate::{tensor, Backend, BackendF, Shape, Tensor};
 use anyhow::Result;
-use rayon::prelude::*;
 
 type Storage = crate::cpu_backend::Storage<f32>;
-type TensorS = crate::TensorS<f32>;
+type TensorS<B> = crate::TensorS<f32, B>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -40,55 +39,63 @@ impl Config {
     }
 }
 
-struct Linear {
-    w: TensorS,
+struct Linear<B: BackendF<f32> + 'static> {
+    w: TensorS<B>,
     #[allow(unused)]
     in_c: usize,
     #[allow(unused)]
     out_c: usize,
 }
 
-impl Linear {
-    fn new(w: TensorS, in_c: usize, out_c: usize) -> Result<Self> {
+impl<B: BackendF<f32>> Linear<B> {
+    fn new(w: TensorS<B>, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
         }
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor<'_, f32>) -> Result<Tensor<'a, f32>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f32, B>) -> Result<Tensor<'a, f32, B>> {
         // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
         let mut dst = Tensor::new(dst, 1)?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32>, src: &Tensor<'_, f32>) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32, B>, src: &Tensor<'_, f32, B>) -> Result<()> {
         dst.matmul_(src, &self.w, true)
     }
 }
 
-struct RmsNorm {
-    alpha: TensorS,
+struct RmsNorm<B: BackendF<f32>> {
+    alpha: TensorS<B>,
     eps: f32,
     dim_m1: usize,
 }
 
-impl RmsNorm {
-    fn new(w: TensorS, eps: f32, dim_m1: usize) -> Result<Self> {
+impl<B: BackendF<f32>> RmsNorm<B> {
+    fn new(w: TensorS<B>, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
         }
         Ok(Self { alpha: w, dim_m1, eps })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut Storage, src: &Tensor<'_, f32>) -> Result<Tensor<'a, f32>> {
+    fn fwd<'a>(
+        &self,
+        dst: &'a mut Storage,
+        src: &Tensor<'_, f32, B>,
+    ) -> Result<Tensor<'a, f32, B>> {
         let mut dst = Tensor::new(dst, src.shape())?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32>, src: &Tensor<'_, f32>) -> Result<()> {
+    fn fwd_inplace<B: Backend<f32>>(
+        &self,
+        dst: &mut Tensor<'_, f32, B>,
+        src: &Tensor<'_, f32, B>,
+    ) -> Result<()> {
         let alpha = self.alpha.data();
         let src = src.data();
         let dst = dst.data_mut();
@@ -104,37 +111,37 @@ impl RmsNorm {
     }
 }
 
-struct Mlp {
-    c_fc1: Linear,
-    c_fc2: Linear,
-    c_proj: Linear,
+struct Mlp<B: BackendF<f32>> {
+    c_fc1: Linear<B>,
+    c_fc2: Linear<B>,
+    c_proj: Linear<B>,
 }
 
-struct Attention {
-    q_proj: Linear,
-    k_proj: Linear,
-    v_proj: Linear,
-    o_proj: Linear,
+struct Attention<B: BackendF<f32>> {
+    q_proj: Linear<B>,
+    k_proj: Linear<B>,
+    v_proj: Linear<B>,
+    o_proj: Linear<B>,
     head_dim: usize,
 }
 
-struct Layer {
-    rms1: RmsNorm,
-    attn: Attention,
-    rms2: RmsNorm,
-    mlp: Mlp,
+struct Layer<B: BackendF<f32>> {
+    rms1: RmsNorm<B>,
+    attn: Attention<B>,
+    rms2: RmsNorm<B>,
+    mlp: Mlp<B>,
 }
 
-pub struct Model {
-    embedding: TensorS,
-    layers: Vec<Layer>,
-    ln_f: RmsNorm,
-    lm_head: Linear,
+pub struct Model<B: BackendF<f32>> {
+    embedding: TensorS<B>,
+    layers: Vec<Layer<B>>,
+    ln_f: RmsNorm<B>,
+    lm_head: Linear<B>,
     config: Config,
 }
 
-pub struct State {
-    xs: TensorS,
+pub struct State<B: BackendF<f32>> {
+    xs: TensorS<B>,
     fc1_xs: Storage,
     fc2_xs: Storage,
     rms_xs: Storage,
@@ -148,14 +155,14 @@ pub struct State {
     attn_scores: Storage,
     attn_xs: Storage,
     attn_xs_t: Storage,
-    logits: TensorS,
-    cos: TensorS,
-    sin: TensorS,
+    logits: TensorS<B>,
+    cos: TensorS<B>,
+    sin: TensorS<B>,
     b_sz: usize,
     kv_caches: Vec<crate::kv_cache::KvCache<'static, f32>>,
 }
 
-impl State {
+impl State<B: BackendF<f32>> {
     pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
@@ -221,12 +228,12 @@ impl State {
         })
     }
 
-    pub fn logits(&self) -> &TensorS {
+    pub fn logits(&self) -> &TensorS<B> {
         &self.logits
     }
 }
 
-impl Model {
+impl Model<B: BackendF> {
     pub fn config(&self) -> &Config {
         &self.config
     }

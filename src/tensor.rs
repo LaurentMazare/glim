@@ -1,7 +1,6 @@
 use crate::cpu_backend::{CowMut, Storage};
 use crate::{Backend, Dim, Shape, WithDType};
 use anyhow::Result;
-use rayon::prelude::*;
 
 // TODO: separate type for StridedTensor? (cannot be owned)
 pub struct Tensor<'a, T: WithDType, B: Backend<T>> {
@@ -40,55 +39,52 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         self.shape.rank()
     }
 
-    pub fn new<S: Into<Shape>>(data: &'a mut Storage<T>, shape: S) -> Result<Self> {
-        let shape = shape.into();
-        if data.inner.len() < shape.elem_count() {
-            anyhow::bail!("not enough elements in storage {} for shape {shape:?}", data.inner.len())
+    pub fn new<S: Into<Shape>>(data: &'a mut B, shape: S) -> Result<Self> {
+        let shape: Shape = shape.into();
+        if data.len() < shape.elem_count() {
+            anyhow::bail!("not enough elements in storage {} for shape {shape:?}", data.len())
         }
         Ok(Self { data: CowMut::Borrowed(data), shape })
-    }
-
-    pub fn into_storage(self) -> CowMut<'a, Storage<T>> {
-        self.data
     }
 
     pub fn zeros(&mut self) -> Result<()> {
         self.data.fill(T::zero())
     }
 
-    pub fn scale(&mut self, m: T) {
-        self.data_mut().iter_mut().for_each(|v| *v *= m)
+    pub fn scale(&mut self, m: T) -> Result<()> {
+        self.data.scale(m)
     }
 
-    pub fn add(&mut self, src: &Tensor<'_, T>) -> Result<()> {
+    pub fn add(&mut self, src: &Tensor<'_, T, B>) -> Result<()> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in add {:?} {:?}", self.shape, src.shape)
         }
-        src.data().iter().zip(self.data_mut().iter_mut()).for_each(|(src, dst)| *dst += *src);
-        Ok(())
+        self.data.add_assign(&src.data)
     }
 
-    pub fn mult(&mut self, src: &Tensor<'_, T>) -> Result<()> {
+    pub fn mult(&mut self, src: &Tensor<'_, T, B>) -> Result<()> {
         if self.shape != src.shape {
             anyhow::bail!("shape mismatch in mult {:?} {:?}", self.shape, src.shape)
         }
-        src.data().iter().zip(self.data_mut().iter_mut()).for_each(|(src, dst)| *dst *= *src);
-        Ok(())
+        self.data.mul_assign(&src.data)
     }
 
-    pub fn data(&self) -> &[T] {
-        let elem_count = self.elem_count();
-        &self.data.inner[..elem_count]
+    // pub fn into_storage(self) -> CowMut<'a, Storage<T>> {
+    //     self.data
+    // }
+
+    pub fn data(&self) -> &B {
+        &self.data
     }
 
-    pub fn data_mut(&mut self) -> &mut [T] {
-        let elem_count = self.elem_count();
-        &mut self.data.inner[..elem_count]
-    }
+    // pub fn data_mut(&mut self) -> &mut [T] {
+    //     let elem_count = self.elem_count();
+    //     &mut self.data.inner[..elem_count]
+    // }
 
     // There is no stride so all tensors are always using the C layout
     pub fn reshape(&mut self, s: impl Into<Shape>) -> Result<()> {
-        let s = s.into();
+        let s: Shape = s.into();
         if s.elem_count() != self.shape.elem_count() {
             anyhow::bail!("num-elems mismatch {s:?} {:?}", self.shape)
         }
@@ -101,7 +97,7 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         dst: &'b mut Storage<T>,
         dim1: usize,
         dim2: usize,
-    ) -> Result<Tensor<'b, T>> {
+    ) -> Result<Tensor<'b, T, B>> {
         if dst.inner.len() != self.elem_count() {
             anyhow::bail!(
                 "num-elems mismatch in transpose, dst {} src {:?}",
@@ -180,7 +176,7 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         let src_o = 0;
         let dst_s = block_size * self.dims()[dim];
         let src_s = d2;
-        copy2d(self.data_mut(), src.data(), d1, d2, dst_s, src_s, dst_o, src_o);
+        self.data.copy2d(&src.data, d1, d2, dst_s, src_s, dst_o, src_o);
         Ok(())
     }
 
@@ -209,7 +205,7 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         };
         let cos_data = cos.data();
         let sin_data = sin.data();
-        rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+        self.data.rope(&cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 
     pub fn rope_i(
@@ -229,7 +225,7 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         };
         let cos_data = cos.data();
         let sin_data = sin.data();
-        rope_i(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
+        self.data.rope_i(&cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 }
 
@@ -263,16 +259,7 @@ impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::Backend
 
     pub fn apply_causality_mask(&mut self) -> Result<()> {
         let (bh, t1, t2) = self.shape().dims3()?;
-        let dst_data = self.data_mut();
-        for idx_b in 0..bh {
-            for idx1 in 0..t1 {
-                for idx2 in idx1 + 1..t2 {
-                    let idx = idx_b * t1 * t2 + idx1 * t2 + idx2;
-                    dst_data[idx] = T::neg_infinity()
-                }
-            }
-        }
-        Ok(())
+        self.data.apply_causality_mask(bh, t1, t2)
     }
 
     pub fn matmul_<V1: crate::TensorOrView<Elem = T>, V2: crate::TensorOrView<Elem = T>>(
@@ -308,10 +295,10 @@ impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::Backend
             )
         }
         let dst_elems = lhs_b * lhs_m * rhs_n;
-        if dst_elems > self.data.inner.len() {
+        if dst_elems > self.data.len() {
             anyhow::bail!(
                 "matmul dst is too small, dst {} < {dst_elems}, lhs {:?} rhs {:?}",
-                self.data.inner.len(),
+                self.data.len(),
                 lhs.shape(),
                 rhs.shape()
             )
@@ -373,11 +360,11 @@ impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::Backend
 pub fn matmul<
     'a,
     T: WithDType + num_traits::Float,
-    B: Backend<T>,
+    B: Backend<T> + crate::BackendF<T>,
     V1: crate::TensorOrView<Elem = T>,
     V2: crate::TensorOrView<Elem = T>,
 >(
-    dst: &'a mut Storage<T>,
+    dst: &'a mut B,
     lhs: &V1,
     rhs: &V2,
     rhs_t: bool,
@@ -389,9 +376,9 @@ pub fn matmul<
 }
 
 impl<'a, B: Backend<f32>> Tensor<'a, f32, B> {
-    pub fn softmax<'b>(&self, dst: &'b mut Storage<f32>) -> Result<Tensor<'b, f32>> {
-        if self.shape.elem_count() > dst.inner.len() {
-            anyhow::bail!("missing capacity for softmax {} {:?}", dst.inner.len(), self.shape)
+    pub fn softmax<'b>(&self, dst: &'b mut B) -> Result<Tensor<'b, f32, B>> {
+        if self.shape.elem_count() > dst.len() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", dst.len(), self.shape)
         }
         let dim_m1 = self.dim(crate::D::Minus1)?;
         let shape = self.shape.clone();
@@ -403,118 +390,18 @@ impl<'a, B: Backend<f32>> Tensor<'a, f32, B> {
 impl<T: WithDType, B: Backend<T>> Tensor<'static, T, B> {
     // Create a tensor with an owned storage.
     pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
-        let shape = shape.into();
-        let data = Storage { inner: vec![t; shape.elem_count()] };
+        let shape: Shape = shape.into();
+        let data = unsafe { B::alloc_uninit(shape.elem_count())? };
+        data.fill(t)?;
         Ok(Self { data: CowMut::Owned(data), shape })
     }
 
     pub fn owned<S: Into<Shape>>(data: Vec<T>, shape: S) -> Result<Self> {
-        let shape = shape.into();
+        let shape: Shape = shape.into();
         if shape.elem_count() > data.len() {
             anyhow::bail!("not enough elements in input vector {} for shape {shape:?}", data.len())
         }
         let data = Storage { inner: data };
         Ok(Self { data: CowMut::Owned(data), shape })
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn copy2d<T: Copy>(
-    dst: &mut [T],
-    src: &[T],
-    d1: usize,
-    d2: usize,
-    dst_s: usize,
-    src_s: usize,
-    dst_o: usize,
-    src_o: usize,
-) {
-    for i1 in 0..d1 {
-        let dst_idx = i1 * dst_s + dst_o;
-        let src_idx = i1 * src_s + src_o;
-        let dst = &mut dst[dst_idx..dst_idx + d2];
-        let src = &src[src_idx..src_idx + d2];
-        dst.copy_from_slice(src)
-    }
-}
-
-pub(crate) fn softmax<T: WithDType + num_traits::Float + Into<f32> + From<f32>>(
-    dst: &mut [T],
-    src: &[T],
-    dim_m1: usize,
-) -> Result<()> {
-    src.par_chunks(dim_m1).zip(dst.par_chunks_mut(dim_m1)).for_each(|(src, dst)| {
-        let mut max = T::neg_infinity();
-        for &v in src.iter() {
-            max = T::max(v, max)
-        }
-        for (s, d) in src.iter().zip(dst.iter_mut()) {
-            *d = (*s - max).exp();
-        }
-        let sum_exp = dst.iter().map(|v| <T as Into<f32>>::into(*v)).sum::<f32>();
-        for d in dst.iter_mut() {
-            *d = <T as From<f32>>::from(<T as Into<f32>>::into(*d) / sum_exp)
-        }
-    });
-    Ok(())
-}
-
-pub(crate) fn rope<T: WithDType>(
-    dst: &mut [T],
-    cos: &[T],
-    sin: &[T],
-    b: usize,
-    h: usize,
-    t: usize,
-    d: usize,
-) -> Result<()> {
-    if dst.len() != b * h * t * d {
-        anyhow::bail!("rope unexpected size for dst {} {b} {h} {t} {d}", dst.len())
-    }
-    dst.par_chunks_mut(t * d).for_each(|dst| {
-        for i_t in 0..t {
-            for i_d in 0..d / 2 {
-                let i1 = i_t * d + i_d;
-                let i2 = i1 + d / 2;
-                let i_cs = i_t * (d / 2) + i_d;
-                let (src_i1, src_i2) = (dst[i1], dst[i2]);
-                dst[i1] = src_i1 * cos[i_cs] - src_i2 * sin[i_cs];
-                dst[i2] = src_i1 * sin[i_cs] + src_i2 * cos[i_cs];
-            }
-        }
-    });
-
-    Ok(())
-}
-
-pub(crate) fn rope_i<T: WithDType>(
-    dst: &mut [T],
-    cos: &[T],
-    sin: &[T],
-    b: usize,
-    h: usize,
-    t: usize,
-    d: usize,
-) -> Result<()> {
-    if dst.len() != b * h * t * d {
-        anyhow::bail!("rope-i unexpected size for dst {} {b} {h} {t} {d}", dst.len())
-    }
-    dst.par_chunks_mut(t * d).for_each(|dst| {
-        for i_over_2 in 0..t * d / 2 {
-            let i = 2 * i_over_2;
-            let (s_i, s_ip) = (dst[i], dst[i + 1]);
-            dst[i] = s_i * cos[i_over_2] - s_ip * sin[i_over_2];
-            dst[i + 1] = s_i * sin[i_over_2] + s_ip * cos[i_over_2];
-        }
-    });
-    Ok(())
-}
-
-pub(crate) fn get_num_threads() -> usize {
-    use std::str::FromStr;
-    // Respond to the same environment variable as rayon.
-    match std::env::var("RAYON_NUM_THREADS").ok().and_then(|s| usize::from_str(&s).ok()) {
-        Some(x) if x > 0 => x,
-        Some(_) | None => num_cpus::get(),
     }
 }
