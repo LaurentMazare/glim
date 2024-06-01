@@ -1,15 +1,8 @@
 use crate::DType;
 use anyhow::Result;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Location {
-    Cpu,
-    Cuda,
-}
-
-pub trait Backend: Sized {
-    const LOCATION: Location;
-    type Device: Clone;
+pub trait Backend<T>: Sized {
+    type Device;
 
     /// # Safety
     /// This function allocates an unitialized block of memory. It is the responsibility of the

@@ -2,7 +2,7 @@ use crate::{tensor, Shape, Tensor};
 use anyhow::Result;
 use rayon::prelude::*;
 
-type Storage = crate::storage::Storage<f32>;
+type Storage = crate::cpu_backend::Storage<f32>;
 type TensorS = crate::TensorS<f32>;
 
 #[derive(Debug, Clone)]

@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
 
     let config = glim::llama::Config::tiny_15m();
-    let mut prs = glim::storage::Storage::cst(0., config.vocab_size)?;
+    let mut prs = glim::cpu_backend::Storage::cst(0., config.vocab_size)?;
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
     let model = glim::llama::Model::new(config, "stories15M.safetensors")?;
     let mut state = glim::llama::State::new(1, model.config())?;

@@ -1,12 +1,13 @@
-pub mod device;
+pub mod backend;
+pub mod cpu_backend;
 pub mod dtype;
 pub mod kv_cache;
 pub mod llama;
 pub mod shape;
-pub mod storage;
 pub mod tensor;
 pub mod tensor_view;
 
+pub use backend::Backend;
 pub use dtype::{DType, WithDType};
 pub use shape::{Dim, Shape, D};
 pub use tensor::Tensor;

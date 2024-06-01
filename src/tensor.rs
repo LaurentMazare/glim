@@ -1,4 +1,4 @@
-use crate::storage::{CowMut, Storage};
+use crate::cpu_backend::{CowMut, Storage};
 use crate::{Dim, Shape, WithDType};
 use anyhow::Result;
 use rayon::prelude::*;
