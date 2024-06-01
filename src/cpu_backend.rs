@@ -2,44 +2,27 @@ use crate::{WithDType, WithDTypeT};
 use anyhow::Result;
 use rayon::prelude::*;
 
-pub enum CowMut<'a, T> {
-    Owned(T),
-    Borrowed(&'a mut T),
-}
+impl<T: WithDType> crate::BackendAlloc<T> for Vec<T> {
+    type Slice = [T];
+    fn len(&self) -> usize {
+        self.len()
+    }
 
-impl<'a, T> std::ops::Deref for CowMut<'a, T> {
-    type Target = T;
+    fn slice(&self) -> &Self::Slice {
+        self.as_slice()
+    }
+    fn slice_mut(&mut self) -> &mut Self::Slice {
+        self.as_mut_slice()
+    }
 
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Owned(o) => o,
-            Self::Borrowed(r) => r,
-        }
+    unsafe fn alloc_uninit(len: usize) -> Result<Self> {
+        Ok(vec![T::zero(); len])
     }
 }
 
-impl<'a, T> std::ops::DerefMut for CowMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Owned(o) => o,
-            Self::Borrowed(r) => r,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Storage<T: WithDType> {
-    pub inner: Vec<T>,
-}
-
-impl<T: WithDType> Storage<T> {
-    pub fn cst(t: T, elts: usize) -> Result<Self> {
-        Ok(Self { inner: vec![t; elts] })
-    }
-}
-
-impl<T: WithDType> crate::Backend<T> for Vec<T> {
+impl<T: WithDType> crate::BackendSlice<T> for [T] {
     type Device = ();
+    type Allocated = Vec<T>;
 
     fn device(&self) -> &Self::Device {
         &()
@@ -120,17 +103,17 @@ impl<T: WithDType> crate::Backend<T> for Vec<T> {
         Ok(())
     }
 
-    fn copy(&self) -> Result<Self> {
+    fn copy(&self) -> Result<Self::Allocated> {
         Ok(self.to_vec())
     }
 
     fn fill(&mut self, v: T) -> Result<()> {
-        self.as_mut_slice().fill(v);
+        self.fill(v);
         Ok(())
     }
 
     fn len(&self) -> usize {
-        Vec::len(self)
+        self.len()
     }
 
     fn rope(
@@ -184,12 +167,52 @@ impl<T: WithDType> crate::Backend<T> for Vec<T> {
         Ok(())
     }
 
-    unsafe fn alloc_uninit(len: usize) -> Result<Self> {
-        Ok(vec![T::zero(); len])
+    fn gemm(
+        &mut self,
+        lhs: &Self,
+        rhs: &Self,
+        m: usize,
+        n: usize,
+        k: usize,
+        lhs_b: usize,
+        b_stride: usize,
+        (dst_cs, dst_rs): (usize, usize),
+        (lhs_cs, lhs_rs): (usize, usize),
+        (rhs_cs, rhs_rs): (usize, usize),
+    ) -> Result<()> {
+        for b_idx in 0..lhs_b {
+            let dst = &mut self[b_idx * m * n..(b_idx + 1) * m * n];
+            let lhs = &lhs[b_idx * m * k..(b_idx + 1) * m * k];
+            let rhs = &rhs[b_idx * b_stride..];
+            unsafe {
+                gemm::gemm(
+                    /* m: usize = */ m,
+                    /* n: usize = */ n,
+                    /* k: usize = */ k,
+                    /* dst: *mut T = */ dst.as_mut_ptr(),
+                    /* dst_cs: isize = */ dst_cs as isize,
+                    /* dst_rs: isize = */ dst_rs as isize,
+                    /* read_dst: bool = */ false,
+                    /* lhs: *const T = */ lhs.as_ptr(),
+                    /* lhs_cs: isize = */ lhs_cs as isize,
+                    /* lhs_rs: isize = */ lhs_rs as isize,
+                    /* rhs: *const T = */ rhs.as_ptr(),
+                    /* rhs_cs: isize = */ rhs_cs as isize,
+                    /* rhs_rs: isize = */ rhs_rs as isize,
+                    /* alpha: T = */ T::zero(),
+                    /* beta: T = */ T::one(),
+                    /* conj_dst: bool = */ false,
+                    /* conj_lhs: bool = */ false,
+                    /* conj_rhs: bool = */ false,
+                    gemm::Parallelism::Rayon(get_num_threads()),
+                )
+            }
+        }
+        Ok(())
     }
 }
 
-impl<T: WithDTypeT> crate::BackendF<T> for Vec<T> {
+impl<T: WithDTypeT> crate::BackendSliceF<T> for [T] {
     fn cos(&mut self) -> Result<()> {
         for d in self.iter_mut() {
             *d = d.cos();

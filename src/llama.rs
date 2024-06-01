@@ -1,7 +1,7 @@
-use crate::{tensor, Backend, BackendF, Shape, Tensor};
+use crate::{tensor, BackendSlice, BackendSliceF, Shape, Tensor};
 use anyhow::Result;
+use rayon::prelude::*;
 
-type Storage = crate::cpu_backend::Storage<f32>;
 type TensorS<B> = crate::TensorS<f32, B>;
 
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ impl Config {
     }
 }
 
-struct Linear<B: BackendF<f32> + 'static> {
+struct Linear<B: BackendSliceF<f32> + 'static> {
     w: TensorS<B>,
     #[allow(unused)]
     in_c: usize,
@@ -47,7 +47,7 @@ struct Linear<B: BackendF<f32> + 'static> {
     out_c: usize,
 }
 
-impl<B: BackendF<f32>> Linear<B> {
+impl<B: BackendSliceF<f32>> Linear<B> {
     fn new(w: TensorS<B>, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
@@ -67,13 +67,13 @@ impl<B: BackendF<f32>> Linear<B> {
     }
 }
 
-struct RmsNorm<B: BackendF<f32>> {
+struct RmsNorm<B: BackendSliceF<f32>> {
     alpha: TensorS<B>,
     eps: f32,
     dim_m1: usize,
 }
 
-impl<B: BackendF<f32>> RmsNorm<B> {
+impl<B: BackendSliceF<f32>> RmsNorm<B> {
     fn new(w: TensorS<B>, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
@@ -81,21 +81,13 @@ impl<B: BackendF<f32>> RmsNorm<B> {
         Ok(Self { alpha: w, dim_m1, eps })
     }
 
-    fn fwd<'a>(
-        &self,
-        dst: &'a mut Storage,
-        src: &Tensor<'_, f32, B>,
-    ) -> Result<Tensor<'a, f32, B>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f32, B>) -> Result<Tensor<'a, f32, B>> {
         let mut dst = Tensor::new(dst, src.shape())?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace<B: Backend<f32>>(
-        &self,
-        dst: &mut Tensor<'_, f32, B>,
-        src: &Tensor<'_, f32, B>,
-    ) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32, B>, src: &Tensor<'_, f32, B>) -> Result<()> {
         let alpha = self.alpha.data();
         let src = src.data();
         let dst = dst.data_mut();
@@ -111,13 +103,13 @@ impl<B: BackendF<f32>> RmsNorm<B> {
     }
 }
 
-struct Mlp<B: BackendF<f32>> {
+struct Mlp<B: BackendSliceF<f32>> {
     c_fc1: Linear<B>,
     c_fc2: Linear<B>,
     c_proj: Linear<B>,
 }
 
-struct Attention<B: BackendF<f32>> {
+struct Attention<B: BackendSliceF<f32>> {
     q_proj: Linear<B>,
     k_proj: Linear<B>,
     v_proj: Linear<B>,
@@ -125,14 +117,14 @@ struct Attention<B: BackendF<f32>> {
     head_dim: usize,
 }
 
-struct Layer<B: BackendF<f32>> {
+struct Layer<B: BackendSliceF<f32>> {
     rms1: RmsNorm<B>,
     attn: Attention<B>,
     rms2: RmsNorm<B>,
     mlp: Mlp<B>,
 }
 
-pub struct Model<B: BackendF<f32>> {
+pub struct Model<B: BackendSliceF<f32>> {
     embedding: TensorS<B>,
     layers: Vec<Layer<B>>,
     ln_f: RmsNorm<B>,
@@ -140,21 +132,21 @@ pub struct Model<B: BackendF<f32>> {
     config: Config,
 }
 
-pub struct State<B: BackendF<f32>> {
+pub struct State<B: BackendSliceF<f32>> {
     xs: TensorS<B>,
-    fc1_xs: Storage,
-    fc2_xs: Storage,
-    rms_xs: Storage,
-    attn_q: Storage,
-    attn_k: Storage,
-    attn_v: Storage,
-    attn_q_t: Storage,
-    attn_k_t: Storage,
-    attn_v_t: Storage,
-    attn_sm: Storage,
-    attn_scores: Storage,
-    attn_xs: Storage,
-    attn_xs_t: Storage,
+    fc1_xs: B::Allocated,
+    fc2_xs: B::Allocated,
+    rms_xs: B::Allocated,
+    attn_q: B::Allocated,
+    attn_k: B::Allocated,
+    attn_v: B::Allocated,
+    attn_q_t: B::Allocated,
+    attn_k_t: B::Allocated,
+    attn_v_t: B::Allocated,
+    attn_sm: B::Allocated,
+    attn_scores: B::Allocated,
+    attn_xs: B::Allocated,
+    attn_xs_t: B::Allocated,
     logits: TensorS<B>,
     cos: TensorS<B>,
     sin: TensorS<B>,
@@ -162,25 +154,25 @@ pub struct State<B: BackendF<f32>> {
     kv_caches: Vec<crate::kv_cache::KvCache<'static, f32, B>>,
 }
 
-impl<B: BackendF<f32>> State<B> {
+impl<B: BackendSliceF<f32>> State<B> {
     pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
         let logits = Tensor::cst(0., (b_sz, seq_len, cfg.vocab_size))?;
         let xs = Tensor::cst(0., (b_sz, seq_len, cfg.dim))?;
-        let fc1_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let fc2_xs = Storage::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
-        let rms_xs = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_xs = Storage::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
-        let attn_xs_t = Storage::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
-        let attn_scores = Storage::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_sm = Storage::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
-        let attn_q = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_q_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_k_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
-        let attn_v_t = Storage::cst(0., b_sz * seq_len * cfg.dim)?;
+        let fc1_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
+        let fc2_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.hidden_dim)?;
+        let rms_xs = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_xs = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * cfg.head_dim())?;
+        let attn_xs_t = B::Allocated::cst(0., b_sz * seq_len * cfg.n_heads * cfg.head_dim())?;
+        let attn_scores = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_sm = B::Allocated::cst(0., b_sz * cfg.n_heads * seq_len * max_seq_len)?;
+        let attn_q = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_q_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_k_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
+        let attn_v_t = B::Allocated::cst(0., b_sz * seq_len * cfg.dim)?;
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
@@ -233,7 +225,7 @@ impl<B: BackendF<f32>> State<B> {
     }
 }
 
-impl<B: BackendF<f32>> Model<B> {
+impl<B: BackendSliceF<f32>> Model<B> {
     pub fn config(&self) -> &Config {
         &self.config
     }

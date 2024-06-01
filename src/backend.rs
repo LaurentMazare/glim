@@ -1,12 +1,21 @@
 use anyhow::Result;
 
-pub trait Backend<T: crate::WithDType>: Sized + 'static {
-    type Device;
+pub trait BackendAlloc<T: crate::WithDType>: Sized + 'static {
+    type Slice: ?Sized;
+
+    fn len(&self) -> usize;
+    fn slice(&self) -> &Self::Slice;
+    fn slice_mut(&mut self) -> &mut Self::Slice;
 
     /// # Safety
     /// This function allocates an unitialized block of memory. It is the responsibility of the
     /// caller to set the memory before using or returning the block.
     unsafe fn alloc_uninit(len: usize) -> Result<Self>;
+}
+
+pub trait BackendSlice<T: crate::WithDType>: 'static {
+    type Device;
+    type Allocated: BackendAlloc<T, Slice = Self>;
 
     fn len(&self) -> usize;
 
@@ -17,7 +26,7 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
     fn device(&self) -> &Self::Device;
     fn fill(&mut self, elem: T) -> Result<()>;
 
-    fn copy(&self) -> Result<Self>;
+    fn copy(&self) -> Result<Self::Allocated>;
 
     fn add_assign(&mut self, s: &Self) -> Result<()>;
     fn mul_assign(&mut self, s: &Self) -> Result<()>;
@@ -39,9 +48,23 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
 
     fn rope(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
     fn rope_i(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
+
+    fn gemm(
+        &mut self,
+        lhs: &Self,
+        rhs: &Self,
+        m: usize,
+        n: usize,
+        k: usize,
+        lhs_b: usize,
+        b_stride: usize,
+        _: (usize, usize),
+        _: (usize, usize),
+        _: (usize, usize),
+    ) -> Result<()>;
 }
 
-pub trait BackendF<T: crate::WithDType + num_traits::Float>: Backend<T> {
+pub trait BackendSliceF<T: crate::WithDType + num_traits::Float>: BackendSlice<T> {
     fn cos(&mut self) -> Result<()>;
     fn sin(&mut self) -> Result<()>;
     fn silu(&mut self) -> Result<()>;

@@ -1,6 +1,6 @@
 //! The shape of a tensor is a tuple with the size of each of its dimensions.
 #![allow(clippy::redundant_closure_call)]
-use crate::{Backend, WithDType};
+use crate::{BackendSlice, WithDType};
 use anyhow::Result;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -102,7 +102,7 @@ macro_rules! extract_dims {
             }
         }
 
-        impl<T: WithDType, B: Backend<T>> crate::Tensor<'_, T, B> {
+        impl<T: WithDType, B: BackendSlice<T>> crate::Tensor<'_, T, B> {
             pub fn $fn_name(&self) -> Result<$out_type> {
                 self.shape().$fn_name()
             }
