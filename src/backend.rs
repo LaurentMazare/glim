@@ -15,7 +15,7 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
     }
 
     fn device(&self) -> &Self::Device;
-    fn fill(&self, elem: T) -> Result<()>;
+    fn fill(&mut self, elem: T) -> Result<()>;
 
     fn copy(&self) -> Result<Self>;
 
@@ -23,7 +23,7 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
     fn mul_assign(&mut self, s: &Self) -> Result<()>;
     fn scale(&mut self, v: T) -> Result<()>;
 
-    fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize) -> Result<()>;
+    fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()>;
 
     #[allow(clippy::too_many_arguments)]
     fn copy2d(
@@ -36,6 +36,9 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
         dst_o: usize,
         src_o: usize,
     ) -> Result<()>;
+
+    fn rope(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
+    fn rope_i(&mut self, _: &Self, _: &Self, b: usize, h: usize, t: usize, d: usize) -> Result<()>;
 }
 
 pub trait BackendF<T: crate::WithDType + num_traits::Float>: Backend<T> {
@@ -43,4 +46,5 @@ pub trait BackendF<T: crate::WithDType + num_traits::Float>: Backend<T> {
     fn sin(&mut self) -> Result<()>;
     fn silu(&mut self) -> Result<()>;
     fn apply_causality_mask(&mut self, bh: usize, t1: usize, t2: usize) -> Result<()>;
+    fn softmax(&mut self, src: &Self, dim_m1: usize) -> Result<()>;
 }

@@ -1,5 +1,5 @@
 use crate::cpu_backend::{CowMut, Storage};
-use crate::{Backend, Dim, Shape, WithDType};
+use crate::{Backend, BackendF, Dim, Shape, WithDType};
 use anyhow::Result;
 
 // TODO: separate type for StridedTensor? (cannot be owned)
@@ -94,59 +94,22 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
 
     pub fn transpose<'b>(
         &self,
-        dst: &'b mut Storage<T>,
+        dst: &'b mut B,
         dim1: usize,
         dim2: usize,
     ) -> Result<Tensor<'b, T, B>> {
-        if dst.inner.len() != self.elem_count() {
+        if dst.len() != self.elem_count() {
             anyhow::bail!(
                 "num-elems mismatch in transpose, dst {} src {:?}",
-                dst.inner.len(),
+                dst.len(),
                 self.shape(),
             )
         }
         if dim1 >= self.rank() || dim2 >= self.rank() {
             anyhow::bail!("dim out of bounds in transpose {:?} {dim1} {dim2}", self.shape())
         }
-        let dims = self.dims();
-        if dim1 == dim2 {
-            dst.inner.copy_from_slice(self.data());
-        } else {
-            let dst_data = &mut dst.inner;
-            let src_data = self.data();
-            let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
-            let d_i = dims[..dim1].iter().product::<usize>();
-            let d_j = dims[dim1 + 1..dim2].iter().product::<usize>();
-            let d_k = dims[(dim2 + 1)..].iter().product::<usize>();
-            let d1 = dims[dim1];
-            let d2 = dims[dim2];
-            // Inefficient, we should blit the data where possible.
-            // i: pre
-            for i in 0..d_i {
-                for a1 in 0..d1 {
-                    // j: mid
-                    for j in 0..d_j {
-                        for a2 in 0..d2 {
-                            // k: post
-                            for k in 0..d_k {
-                                let src_idx = i * d1 * d_j * d2 * d_k
-                                    + a1 * d_j * d2 * d_k
-                                    + j * d2 * d_k
-                                    + a2 * d_k
-                                    + k;
-                                let dst_idx = i * d2 * d_j * d1 * d_k
-                                    + a2 * d_j * d1 * d_k
-                                    + j * d1 * d_k
-                                    + a1 * d_k
-                                    + k;
-                                dst_data[dst_idx] = src_data[src_idx]
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let mut shape = dims.to_vec();
+        dst.transpose(&self.data, dim1, dim2, self.dims())?;
+        let mut shape = self.dims().to_vec();
         shape.swap(dim1, dim2);
         Ok(Tensor { data: CowMut::Borrowed(dst), shape: shape.into() })
     }
@@ -242,9 +205,7 @@ impl<'a, T: WithDType + candle::WithDType> Tensor<'a, T> {
     }
 }
 
-impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::BackendF<T>>
-    Tensor<'a, T, B>
-{
+impl<'a, T: WithDType + num_traits::Float, B: BackendF<T>> Tensor<'a, T, B> {
     pub fn cos(&mut self) -> Result<()> {
         self.data.cos()
     }
@@ -349,18 +310,28 @@ impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::Backend
                     /* conj_dst: bool = */ false,
                     /* conj_lhs: bool = */ false,
                     /* conj_rhs: bool = */ false,
-                    gemm::Parallelism::Rayon(crate::tensor::get_num_threads()),
+                    gemm::Parallelism::Rayon(get_num_threads()),
                 )
             }
         }
         Ok(())
+    }
+
+    pub fn softmax<'b>(&self, dst: &'b mut B) -> Result<Tensor<'b, T, B>> {
+        if self.shape.elem_count() > dst.len() {
+            anyhow::bail!("missing capacity for softmax {} {:?}", dst.len(), self.shape)
+        }
+        let dim_m1 = self.dim(crate::D::Minus1)?;
+        let shape = self.shape.clone();
+        dst.softmax(self.data(), dim_m1)?;
+        Ok(Tensor { data: CowMut::Borrowed(dst), shape })
     }
 }
 
 pub fn matmul<
     'a,
     T: WithDType + num_traits::Float,
-    B: Backend<T> + crate::BackendF<T>,
+    B: BackendF<T>,
     V1: crate::TensorOrView<Elem = T>,
     V2: crate::TensorOrView<Elem = T>,
 >(
@@ -375,33 +346,20 @@ pub fn matmul<
     Ok(dst)
 }
 
-impl<'a, B: Backend<f32>> Tensor<'a, f32, B> {
-    pub fn softmax<'b>(&self, dst: &'b mut B) -> Result<Tensor<'b, f32, B>> {
-        if self.shape.elem_count() > dst.len() {
-            anyhow::bail!("missing capacity for softmax {} {:?}", dst.len(), self.shape)
-        }
-        let dim_m1 = self.dim(crate::D::Minus1)?;
-        let shape = self.shape.clone();
-        softmax(&mut dst.inner, self.data(), dim_m1)?;
-        Ok(Tensor { data: CowMut::Borrowed(dst), shape })
-    }
-}
-
 impl<T: WithDType, B: Backend<T>> Tensor<'static, T, B> {
     // Create a tensor with an owned storage.
     pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
         let shape: Shape = shape.into();
-        let data = unsafe { B::alloc_uninit(shape.elem_count())? };
+        let mut data = unsafe { B::alloc_uninit(shape.elem_count())? };
         data.fill(t)?;
         Ok(Self { data: CowMut::Owned(data), shape })
     }
 
-    pub fn owned<S: Into<Shape>>(data: Vec<T>, shape: S) -> Result<Self> {
+    pub fn owned<S: Into<Shape>>(data: B, shape: S) -> Result<Self> {
         let shape: Shape = shape.into();
         if shape.elem_count() > data.len() {
             anyhow::bail!("not enough elements in input vector {} for shape {shape:?}", data.len())
         }
-        let data = Storage { inner: data };
         Ok(Self { data: CowMut::Owned(data), shape })
     }
 }

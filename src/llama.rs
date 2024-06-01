@@ -159,10 +159,10 @@ pub struct State<B: BackendF<f32>> {
     cos: TensorS<B>,
     sin: TensorS<B>,
     b_sz: usize,
-    kv_caches: Vec<crate::kv_cache::KvCache<'static, f32>>,
+    kv_caches: Vec<crate::kv_cache::KvCache<'static, f32, B>>,
 }
 
-impl State<B: BackendF<f32>> {
+impl<B: BackendF<f32>> State<B> {
     pub fn new(b_sz: usize, cfg: &Config) -> Result<Self> {
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
@@ -233,12 +233,12 @@ impl State<B: BackendF<f32>> {
     }
 }
 
-impl Model<B: BackendF> {
+impl<B: BackendF<f32>> Model<B> {
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    pub fn fwd(&self, tokens: &[u32], state: &mut State) -> Result<()> {
+    pub fn fwd(&self, tokens: &[u32], state: &mut State<B>) -> Result<()> {
         let (b_sz, seq_len) = (1, tokens.len());
         if state.b_sz != b_sz {
             anyhow::bail!("batch size mismatch {} {b_sz}", state.b_sz)
