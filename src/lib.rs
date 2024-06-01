@@ -7,7 +7,7 @@ pub mod shape;
 pub mod tensor;
 pub mod tensor_view;
 
-pub use backend::Backend;
+pub use backend::{Backend, BackendF};
 pub use dtype::{DType, WithDType};
 pub use shape::{Dim, Shape, D};
 pub use tensor::Tensor;

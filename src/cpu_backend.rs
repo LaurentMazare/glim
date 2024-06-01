@@ -36,3 +36,53 @@ impl<T: WithDType> Storage<T> {
         Ok(Self { inner: vec![t; elts] })
     }
 }
+
+impl<T: WithDType> crate::Backend<T> for Vec<T> {
+    type Device = ();
+
+    fn device(&self) -> &Self::Device {
+        &()
+    }
+
+    // fn fill(&self, elem: T) -> Result<()> {
+    //     self.fill(elem);
+    //     Ok(())
+    // }
+    fn add_assign(&mut self, s: &Self) -> Result<()> {
+        s.iter().zip(self.iter_mut()).for_each(|(src, dst)| *dst += *src);
+        Ok(())
+    }
+
+    fn mul_assign(&mut self, s: &Self) -> Result<()> {
+        s.iter().zip(self.iter_mut()).for_each(|(src, dst)| *dst *= *src);
+        Ok(())
+    }
+
+    fn scale(&mut self, m: T) -> Result<()> {
+        self.iter_mut().for_each(|v| *v *= m);
+        Ok(())
+    }
+}
+
+impl<T: WithDType + num_traits::Float> crate::BackendF<T> for Vec<T> {
+    fn cos(&mut self) -> Result<()> {
+        for d in self.iter_mut() {
+            *d = d.cos();
+        }
+        Ok(())
+    }
+
+    fn sin(&mut self) -> Result<()> {
+        for d in self.iter_mut() {
+            *d = d.sin();
+        }
+        Ok(())
+    }
+
+    fn silu(&mut self) -> Result<()> {
+        for d in self.iter_mut() {
+            *d /= T::one() + (T::zero() - *d).exp()
+        }
+        Ok(())
+    }
+}

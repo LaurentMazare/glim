@@ -1,15 +1,15 @@
 use crate::cpu_backend::{CowMut, Storage};
-use crate::{Dim, Shape, WithDType};
+use crate::{Backend, Dim, Shape, WithDType};
 use anyhow::Result;
 use rayon::prelude::*;
 
 // TODO: separate type for StridedTensor? (cannot be owned)
-pub struct Tensor<'a, T: WithDType> {
-    data: CowMut<'a, Storage<T>>,
+pub struct Tensor<'a, T: WithDType, B: Backend<T>> {
+    data: CowMut<'a, B>,
     shape: Shape,
 }
 
-impl<'a, T: WithDType> Tensor<'a, T> {
+impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
     pub fn dtype(&self) -> crate::DType {
         T::DTYPE
     }
@@ -29,7 +29,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.data.inner.len()
+        self.data.len()
     }
 
     pub fn elem_count(&self) -> usize {
@@ -52,8 +52,8 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         self.data
     }
 
-    pub fn zeros(&mut self) {
-        self.data.inner.fill(T::zero())
+    pub fn zeros(&mut self) -> Result<()> {
+        self.data.fill(T::zero())
     }
 
     pub fn scale(&mut self, m: T) {
@@ -157,7 +157,7 @@ impl<'a, T: WithDType> Tensor<'a, T> {
 
     pub fn slice_assign<D: Dim>(
         &mut self,
-        src: &Tensor<'_, T>,
+        src: &Tensor<'_, T, B>,
         dim: D,
         offset: usize,
     ) -> Result<()> {
@@ -184,15 +184,20 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn copy(&self) -> Result<Tensor<'static, T>> {
+    pub fn copy(&self) -> Result<Tensor<'static, T, B>> {
         let storage = match &self.data {
-            CowMut::Owned(v) => v.clone(),
-            CowMut::Borrowed(v) => Storage::clone(v),
+            CowMut::Owned(v) => v.copy()?,
+            CowMut::Borrowed(v) => v.copy()?,
         };
         Ok(Tensor { data: CowMut::Owned(storage), shape: self.shape.clone() })
     }
 
-    pub fn rope(&mut self, cos: &Tensor<'_, T>, sin: &Tensor<'_, T>, pos: usize) -> Result<()> {
+    pub fn rope(
+        &mut self,
+        cos: &Tensor<'_, T, B>,
+        sin: &Tensor<'_, T, B>,
+        pos: usize,
+    ) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -207,7 +212,12 @@ impl<'a, T: WithDType> Tensor<'a, T> {
         rope(self.data_mut(), &cos_data[pos * d / 2..], &sin_data[pos * d / 2..], b, h, t, d)
     }
 
-    pub fn rope_i(&mut self, cos: &Tensor<'_, T>, sin: &Tensor<'_, T>, pos: usize) -> Result<()> {
+    pub fn rope_i(
+        &mut self,
+        cos: &Tensor<'_, T, B>,
+        sin: &Tensor<'_, T, B>,
+        pos: usize,
+    ) -> Result<()> {
         let (b, h, t, d) = self.shape().dims4()?;
         match cos.dims() {
             [_t, d_over_2] if 2 * d_over_2 == d => {}
@@ -236,23 +246,19 @@ impl<'a, T: WithDType + candle::WithDType> Tensor<'a, T> {
     }
 }
 
-impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
-    pub fn cos(&mut self) {
-        for d in self.data_mut().iter_mut() {
-            *d = d.cos();
-        }
+impl<'a, T: WithDType + num_traits::Float, B: crate::Backend<T> + crate::BackendF<T>>
+    Tensor<'a, T, B>
+{
+    pub fn cos(&mut self) -> Result<()> {
+        self.data.cos()
     }
 
-    pub fn sin(&mut self) {
-        for d in self.data_mut().iter_mut() {
-            *d = d.sin();
-        }
+    pub fn sin(&mut self) -> Result<()> {
+        self.data.sin()
     }
 
-    pub fn silu(&mut self) {
-        for d in self.data_mut().iter_mut() {
-            *d /= T::one() + (T::zero() - *d).exp()
-        }
+    pub fn silu(&mut self) -> Result<()> {
+        self.data.silu()
     }
 
     pub fn apply_causality_mask(&mut self) -> Result<()> {
@@ -367,6 +373,7 @@ impl<'a, T: WithDType + num_traits::Float> Tensor<'a, T> {
 pub fn matmul<
     'a,
     T: WithDType + num_traits::Float,
+    B: Backend<T>,
     V1: crate::TensorOrView<Elem = T>,
     V2: crate::TensorOrView<Elem = T>,
 >(
@@ -374,14 +381,14 @@ pub fn matmul<
     lhs: &V1,
     rhs: &V2,
     rhs_t: bool,
-) -> Result<Tensor<'a, T>> {
+) -> Result<Tensor<'a, T, B>> {
     // TODO: Use the proper shape here rather than relying on matmul to do the reshape?
     let mut dst = Tensor::new(dst, 1)?;
     dst.matmul_(lhs, rhs, rhs_t)?;
     Ok(dst)
 }
 
-impl<'a> Tensor<'a, f32> {
+impl<'a, B: Backend<f32>> Tensor<'a, f32, B> {
     pub fn softmax<'b>(&self, dst: &'b mut Storage<f32>) -> Result<Tensor<'b, f32>> {
         if self.shape.elem_count() > dst.inner.len() {
             anyhow::bail!("missing capacity for softmax {} {:?}", dst.inner.len(), self.shape)
@@ -393,7 +400,7 @@ impl<'a> Tensor<'a, f32> {
     }
 }
 
-impl<T: WithDType> Tensor<'static, T> {
+impl<T: WithDType, B: Backend<T>> Tensor<'static, T, B> {
     // Create a tensor with an owned storage.
     pub fn cst<S: Into<Shape>>(t: T, shape: S) -> Result<Self> {
         let shape = shape.into();
