@@ -26,6 +26,15 @@ debug = true
 inherits = "release"
 debug = false
 
+[[example]]
+name = "tiny"
+path = "examples/tiny.rs"
+
+[[example]]
+name = "tiny-cuda"
+path = "examples/tiny_cuda.rs"
+required-features = ["cuda"]
+
 [features]
 default = []
 candle = ["dep:candle"]
