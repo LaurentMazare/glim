@@ -47,7 +47,10 @@ impl<T: crate::WithDType + DeviceRepr> crate::Backend<T> for Storage<T> {
     }
 
     fn copy(&self, len: usize) -> Result<Self> {
-        anyhow::bail!("not implemented")
+        let mut dst = unsafe { self.device.cuda.alloc::<T>(len) }?;
+        let src = self.data.slice(..len);
+        self.device.cuda.dtod_copy(&src, &mut dst)?;
+        Ok(Self { data: dst, device: self.device.clone() })
     }
 
     fn rope(
@@ -143,6 +146,12 @@ impl<T: crate::WithDTypeF + DeviceRepr> crate::BackendF<T> for Storage<T> {
         anyhow::bail!("not implemented")
     }
     fn silu(&mut self, len: usize) -> Result<()> {
+        // TODO: Proper dtype kernel.
+        let func = self.device.get_or_load_func("usilu_f32", candle_kernels::UNARY)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, 1usize, 0usize, 0usize, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+
         anyhow::bail!("not implemented")
     }
     fn softmax(&mut self, src: &Self, dim_m1: usize, d: usize) -> Result<()> {
