@@ -106,22 +106,38 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         lhs_b: usize,
         b_stride: usize,
         (dst_cs, dst_rs): (usize, usize),
-        (lhs_cs, lhs_rs): (usize, usize),
-        (rhs_cs, rhs_rs): (usize, usize),
+        (lhs_m1, lhs_m2): (usize, usize),
+        (rhs_m1, rhs_m2): (usize, usize),
     ) -> Result<()> {
+        // TODO: Check that the parameters are valid, e.g. dst_cs == 1 etc.
         // https://docs.nvidia.com/cuda/cublas/index.html#cublas-t-gemm
         use cudarc::cublas::sys::cublasOperation_t;
+        let (lda, transa) = if (rhs_m1 == 1 || n == 1) && (rhs_m2 == n || k == 1) {
+            (n as i32, cublasOperation_t::CUBLAS_OP_N)
+        } else if (rhs_m1 == k || n == 1) && (rhs_m2 == 1 || k == 1) {
+            (k as i32, cublasOperation_t::CUBLAS_OP_T)
+        } else {
+            anyhow::bail!("non-contiguous matmul rhs m:{m} n:{n} k:{k} {rhs_m2} {rhs_m1}")
+        };
+        let (ldb, transb) = if (lhs_m1 == 1 || k == 1) && (lhs_m2 == k || m == 1) {
+            (k as i32, cublasOperation_t::CUBLAS_OP_N)
+        } else if (lhs_m1 == m || k == 1) && (lhs_m2 == 1 || m == 1) {
+            (m as i32, cublasOperation_t::CUBLAS_OP_T)
+        } else {
+            anyhow::bail!("non-contiguous matmul lhs m:{m} n:{n} k:{k} {lhs_m2} {lhs_m1}")
+        };
+
         let gemm = GemmConfig {
             alpha: T::one(),
             beta: T::zero(),
             m: n as i32,
             n: m as i32,
             k: k as i32,
-            lda: lhs_cs as i32,
-            ldb: rhs_cs as i32,
-            ldc: dst_cs as i32,
-            transa: cublasOperation_t::CUBLAS_OP_N,
-            transb: cublasOperation_t::CUBLAS_OP_N,
+            lda,
+            ldb,
+            ldc: dst_rs as i32,
+            transa,
+            transb,
         };
         let cfg = StridedBatchedConfig {
             batch_size: lhs_b as i32,
@@ -132,7 +148,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         };
         let lhs = &lhs.0.data.slice(lhs.1..);
         let rhs = &rhs.0.data.slice(rhs.1..);
-        unsafe { T::gemm(&self.device.blas, cfg, lhs, rhs, &mut self.data)? };
+        unsafe { T::gemm(&self.device.blas, cfg, rhs, lhs, &mut self.data)? };
         Ok(())
     }
 

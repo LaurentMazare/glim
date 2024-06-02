@@ -17,3 +17,5 @@ gen*.json
 *.safetensors
 *.pt
 tokenizer.json
+
+report*.nsys-rep
