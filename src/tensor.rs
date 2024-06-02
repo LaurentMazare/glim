@@ -218,15 +218,23 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
 }
 
 #[cfg(feature = "candle")]
-impl<'a, T: WithDType + candle::WithDType> Tensor<'a, T> {
+impl<'a, T: WithDType + candle::WithDType, B: Backend<T>> Tensor<'a, T, B> {
     pub fn to_candle(&self) -> Result<candle::Tensor> {
-        let t = candle::Tensor::from_slice(self.data(), self.dims(), &candle::Device::Cpu)?;
+        let el = self.elem_count();
+        let t = match self.data.as_ref().data(el)? {
+            std::borrow::Cow::Borrowed(v) => {
+                candle::Tensor::from_slice(v, self.dims(), &candle::Device::Cpu)?
+            }
+            std::borrow::Cow::Owned(v) => {
+                candle::Tensor::from_vec(v, self.dims(), &candle::Device::Cpu)?
+            }
+        };
         Ok(t)
     }
 
-    pub fn from_candle(t: &candle::Tensor) -> Result<Self> {
+    pub fn from_candle(t: &candle::Tensor, dev: &B::Device) -> Result<Self> {
         let data = t.flatten_all()?.to_vec1::<T>()?;
-        Tensor::owned(data, t.dims())
+        Tensor::from_vec(data, t.dims(), dev)
     }
 }
 

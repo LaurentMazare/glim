@@ -23,6 +23,7 @@ pub trait Backend<T: crate::WithDType>: Sized + 'static {
     fn device(&self) -> &Self::Device;
     fn fill(&mut self, elem: T, len: usize) -> Result<()>;
     fn copy(&self, len: usize) -> Result<Self>;
+    fn data(&self, len: usize) -> Result<std::borrow::Cow<'_, [T]>>;
 
     fn add_assign(&mut self, s: &Self, len: usize) -> Result<()>;
     fn mul_assign(&mut self, s: &Self, len: usize) -> Result<()>;

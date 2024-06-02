@@ -16,6 +16,7 @@ safetensors = "0.4.3"
 byteorder = "1.5.0"
 candle = { package = "candle-core", version = "0.5.0", optional = true }
 tokenizers = "0.19.1"
+cudarc = { version = "0.11.3", features = ["std", "cublas", "cublaslt", "curand", "driver", "nvrtc", "f16", "cuda-version-from-build-system", "dynamic-linking"], default-features=false, optional = true }
 
 [profile.release]
 debug = true
@@ -27,3 +28,4 @@ debug = false
 [features]
 default = []
 candle = ["dep:candle"]
+cuda = ["dep:cudarc"]

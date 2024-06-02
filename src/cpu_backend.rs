@@ -13,6 +13,10 @@ impl<T: WithDType> crate::Backend<T> for Vec<T> {
         Ok(v)
     }
 
+    fn data<'a>(&'a self, len: usize) -> Result<std::borrow::Cow<'a, [T]>> {
+        Ok(std::borrow::Cow::Borrowed(&self[..len]))
+    }
+
     fn device(&self) -> &Self::Device {
         &()
     }

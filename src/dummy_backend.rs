@@ -91,6 +91,9 @@ impl<T: crate::WithDType> crate::Backend<T> for Dummy {
     fn from_vec(v: Vec<T>, _: &Self::Device) -> Result<Self> {
         anyhow::bail!("not implemented")
     }
+    fn data(&self, len: usize) -> Result<std::borrow::Cow<'_, [T]>> {
+        anyhow::bail!("not implemented")
+    }
     unsafe fn alloc_uninit(len: usize, _: &Self::Device) -> Result<Self> {
         anyhow::bail!("not implemented")
     }
