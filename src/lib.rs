@@ -8,6 +8,9 @@ pub mod shape;
 pub mod tensor;
 pub mod tensor_view;
 
+#[cfg(feature = "cuda")]
+pub mod cuda_backend;
+
 pub use backend::{Backend, BackendF};
 pub use dtype::{DType, WithDType, WithDTypeF};
 pub use shape::{Dim, Shape, D};
