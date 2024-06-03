@@ -170,7 +170,15 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         dst_o: usize,
         src_o: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented: copy2d")
+        let kname = kernel_name::<T>("copy2d");
+        let (d1, d2, dst_s, src_s) = (d1 as u32, d2 as u32, dst_s as u32, src_s as u32);
+        let func = self.device.get_or_load_func(&kname, candle_kernels::FILL)?;
+        let cfg = LaunchConfig::for_num_elems(d1 * d2);
+        let src = src.data.slice(src_o..);
+        let dst = self.data.slice(dst_o..);
+        let params = (&src, &dst, d1, d2, src_s, dst_s);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn rope_i(
