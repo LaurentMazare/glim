@@ -203,7 +203,25 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()> {
-        anyhow::bail!("not implemented: index-select")
+        const NUM_THREADS: u32 = 1024;
+
+        let kname = kernel_name::<T>("is_u32");
+        let threads_x = u32::min(NUM_THREADS, ids.len() as u32);
+        let threads_y = u32::min(NUM_THREADS / threads_x, dim as u32);
+        let num_blocks_x = (ids.len() as u32 + threads_x - 1) / threads_x;
+        let num_blocks_y = (dim as u32 + threads_y - 1) / threads_y;
+
+        let ids_len = ids.len();
+        let ids = self.device.cuda.htod_sync_copy(&ids)?;
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::INDEXING)?;
+        let cfg = LaunchConfig {
+            grid_dim: (num_blocks_x, num_blocks_y, 1),
+            block_dim: (threads_x, threads_y, 1),
+            shared_mem_bytes: 0,
+        };
+        let params = (ids_len as i32, dim as i32, &ids, &src.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn from_vec(v: Vec<T>, device: &Self::Device) -> Result<Self> {
