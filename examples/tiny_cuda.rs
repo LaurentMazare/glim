@@ -1,5 +1,6 @@
 extern crate glim;
 use anyhow::Context;
+use glim::Backend as _B;
 
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
@@ -20,7 +21,8 @@ fn main() -> anyhow::Result<()> {
     let device = glim::cuda_backend::Device::new(0)?;
 
     let config = glim::llama::Config::tiny_15m();
-    let mut prs = vec![0f32; config.vocab_size];
+    let vocab_size = config.vocab_size;
+    let mut prs = vec![0f32; vocab_size];
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
     let model: glim::llama::Model<Backend> =
         glim::llama::Model::new(config, &device, "stories15M.safetensors")?;
@@ -29,10 +31,12 @@ fn main() -> anyhow::Result<()> {
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];
+    let mut prs_storage = unsafe { Backend::alloc_uninit(vocab_size, &device)? };
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
-        // let prs = state.logits().softmax(&mut prs)?;
+        let prs = state.logits().softmax(&mut prs_storage)?;
+        // let prs = prs.data()?;
         // let distr = rand::distributions::WeightedIndex::new(prs.storage())?;
         // let token = distr.sample(&mut rng) as u32;
         // tokens.push(token);

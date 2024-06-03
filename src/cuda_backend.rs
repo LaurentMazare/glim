@@ -324,7 +324,8 @@ impl<T: crate::WithDTypeF + CudaType> crate::BackendF<T> for Storage<T> {
     fn softmax(&mut self, src: &Self, dim_m1: usize, d: usize) -> Result<()> {
         let kname = kernel_name::<T>("softmax");
         let func = self.device.get_or_load_func(&kname, candle_kernels::REDUCE)?;
-        let cfg = LaunchConfig::for_num_elems((d * dim_m1) as u32);
+        let cfg =
+            LaunchConfig { grid_dim: (d as u32, 1, 1), block_dim: (1, 32, 1), shared_mem_bytes: 0 };
         let params = (&src.data, &mut self.data, dim_m1 as i32);
         unsafe { func.launch(cfg, params) }?;
         Ok(())

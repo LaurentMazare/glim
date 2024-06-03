@@ -7,6 +7,8 @@ __device__ void transpose(const size_t numel, const uint32_t d1, const uint32_t 
     const size_t dst_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 
+    // The implementation below is very slow as it computes lots of divisions and multiplications.
+    // TODO: Replace it with an optimized implementation and/or process data by blocks.
     size_t dst_idx2 = dst_idx;
     const size_t i = dst_idx2 / (d2 * d_j * d1 * d_k);
     dst_idx2 -= i * d2 * d_j * d1 * d_k;
