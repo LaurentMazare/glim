@@ -93,7 +93,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: rope")
     }
 
     fn gemm(
@@ -153,7 +153,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn scale(&mut self, v: T, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: scale")
     }
 
     fn device(&self) -> &Self::Device {
@@ -170,7 +170,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         dst_o: usize,
         src_o: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: copy2d")
     }
 
     fn rope_i(
@@ -183,7 +183,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: rope-i")
     }
 
     fn is_empty(&self) -> bool {
@@ -191,19 +191,19 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: transpose")
     }
 
     fn add_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: add-assign")
     }
 
     fn mul_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: mul-assign")
     }
 
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: index-select")
     }
 
     fn from_vec(v: Vec<T>, device: &Self::Device) -> Result<Self> {
@@ -212,7 +212,9 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn data(&self, len: usize) -> Result<std::borrow::Cow<'_, [T]>> {
-        anyhow::bail!("not implemented")
+        let data = self.data.slice(..len);
+        let data = self.device.cuda.dtoh_sync_copy(&data)?;
+        Ok(std::borrow::Cow::Owned(data))
     }
 
     unsafe fn alloc_uninit(len: usize, device: &Self::Device) -> Result<Self> {
@@ -275,7 +277,7 @@ impl<T: crate::WithDTypeF + CudaType> crate::BackendF<T> for Storage<T> {
     }
 
     fn apply_causality_mask(&mut self, bh: usize, t1: usize, t2: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: causality-mask")
     }
 }
 
