@@ -19,6 +19,9 @@ tokenizers = "0.19.1"
 cudarc = { version = "0.11.3", features = ["std", "cublas", "cublaslt", "curand", "driver", "nvrtc", "f16", "cuda-version-from-build-system", "dynamic-linking"], default-features=false, optional = true }
 candle-kernels = { version = "0.5.1", optional = true }
 
+[build-dependencies]
+bindgen_cuda = { version = "0.1.5", optional = true }
+
 [profile.release]
 debug = true
 
@@ -38,4 +41,4 @@ required-features = ["cuda"]
 [features]
 default = []
 candle = ["dep:candle"]
-cuda = ["dep:cudarc", "dep:candle-kernels"]
+cuda = ["dep:cudarc", "dep:candle-kernels", "dep:bindgen_cuda"]

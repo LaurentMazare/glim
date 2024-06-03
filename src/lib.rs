@@ -10,6 +10,8 @@ pub mod tensor_view;
 
 #[cfg(feature = "cuda")]
 pub mod cuda_backend;
+#[cfg(feature = "cuda")]
+pub mod cuda_kernels;
 
 pub use backend::{Backend, BackendF};
 pub use dtype::{DType, WithDType, WithDTypeF};
