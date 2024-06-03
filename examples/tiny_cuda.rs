@@ -22,7 +22,6 @@ fn main() -> anyhow::Result<()> {
 
     let config = glim::llama::Config::tiny_15m();
     let vocab_size = config.vocab_size;
-    let mut prs = vec![0f32; vocab_size];
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
     let model: glim::llama::Model<Backend> =
         glim::llama::Model::new(config, &device, "stories15M.safetensors")?;
@@ -36,10 +35,10 @@ fn main() -> anyhow::Result<()> {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
         let prs = state.logits().softmax(&mut prs_storage)?;
-        // let prs = prs.data()?;
-        // let distr = rand::distributions::WeightedIndex::new(prs.storage())?;
-        // let token = distr.sample(&mut rng) as u32;
-        // tokens.push(token);
+        let prs = prs.data_t()?;
+        let distr = rand::distributions::WeightedIndex::new(prs.as_ref())?;
+        let token = distr.sample(&mut rng) as u32;
+        tokens.push(token);
     }
     let dt = start_time.elapsed();
     let s = tokenizer.decode(&tokens, false).unwrap();

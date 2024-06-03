@@ -61,6 +61,11 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         Ok(self.dims()[dim])
     }
 
+    pub fn data_t(&self) -> Result<std::borrow::Cow<'_, [T]>> {
+        let el_count = self.elem_count();
+        self.data.as_ref().data(el_count)
+    }
+
     pub fn capacity(&self) -> usize {
         self.data.as_ref().len()
     }
