@@ -85,15 +85,21 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
 
     fn rope(
         &mut self,
-        _: &Self,
-        _: &Self,
+        cos: &Self,
+        sin: &Self,
         b: usize,
         h: usize,
         t: usize,
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented: rope")
+        let (bh, td) = ((b * h) as u32, (t * d) as u32);
+        let kname = kernel_name::<T>("rope");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ROPE)?;
+        let cfg = LaunchConfig::for_num_elems(bh * td);
+        let params = (&self.data, &cos.data, &sin.data, bh, td);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn gemm(
@@ -153,7 +159,12 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn scale(&mut self, v: T, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented: scale")
+        let kname = kernel_name::<T>("scale");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &mut self.data, v);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn device(&self) -> &Self::Device {
@@ -183,15 +194,21 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
 
     fn rope_i(
         &mut self,
-        _: &Self,
-        _: &Self,
+        cos: &Self,
+        sin: &Self,
         b: usize,
         h: usize,
         t: usize,
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented: rope-i")
+        let (bh, td) = ((b * h) as u32, (t * d) as u32);
+        let kname = kernel_name::<T>("ropei");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ROPE)?;
+        let cfg = LaunchConfig::for_num_elems(bh * td);
+        let params = (&self.data, &cos.data, &sin.data, bh, td);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn is_empty(&self) -> bool {
@@ -203,11 +220,21 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn add_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented: add-assign")
+        let kname = kernel_name::<T>("add_assign");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &s.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn mul_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented: mul-assign")
+        let kname = kernel_name::<T>("mul_assign");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &s.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()> {
