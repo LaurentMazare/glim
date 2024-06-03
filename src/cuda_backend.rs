@@ -148,8 +148,8 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         let cfg = StridedBatchedConfig {
             batch_size: lhs_b as i32,
             gemm,
-            stride_a: (m * k) as i64,
-            stride_b: b_stride as i64,
+            stride_a: b_stride as i64,
+            stride_b: (m * k) as i64,
             stride_c: (m * n) as i64,
         };
         let lhs = &lhs.0.data.slice(lhs.1..);

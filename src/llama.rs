@@ -234,6 +234,7 @@ impl<B: BackendF<f32>> Model<B> {
         let h = self.config.n_heads;
         let d = self.config.dim / h;
         state.xs.index_select(&self.embedding, tokens)?;
+
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             {
@@ -276,7 +277,6 @@ impl<B: BackendF<f32>> Model<B> {
                 let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
                 state.xs.add(&o)?;
             }
-
             {
                 let rms_xs = layer.rms2.fwd(&mut state.rms_xs, &state.xs)?;
                 // MLP
