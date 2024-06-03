@@ -203,7 +203,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         pos: usize,
     ) -> Result<()> {
         let (bh, td) = ((b * h) as u32, (t * d) as u32);
-        let kname = kernel_name::<T>("ropei");
+        let kname = kernel_name::<T>("rope_i");
         let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ROPE)?;
         let cfg = LaunchConfig::for_num_elems(bh * td);
         let params = (&self.data, &cos.data, &sin.data, bh, td);
@@ -215,8 +215,25 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         self.data.is_empty()
     }
 
-    fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()> {
-        anyhow::bail!("not implemented: transpose")
+    fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()> {
+        let len: usize = dims.iter().product();
+        if dim1 == dim2 {
+            let src = src.data.slice(..len);
+            self.device.cuda.dtod_copy(&src, &mut self.data)?
+        } else {
+            let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
+            let d_i = dims[..dim1].iter().product::<usize>() as u32;
+            let d_j = dims[dim1 + 1..dim2].iter().product::<usize>() as u32;
+            let d_k = dims[(dim2 + 1)..].iter().product::<usize>() as u32;
+            let d1 = dims[dim1] as u32;
+            let d2 = dims[dim2] as u32;
+            let kname = kernel_name::<T>("transpose");
+            let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::LAYOUT)?;
+            let cfg = LaunchConfig::for_num_elems(len as u32);
+            let params = (len, d1, d2, d_i, d_j, d_k, &src.data, &mut self.data);
+            unsafe { func.launch(cfg, params) }?;
+        }
+        Ok(())
     }
 
     fn add_assign(&mut self, s: &Self, len: usize) -> Result<()> {
