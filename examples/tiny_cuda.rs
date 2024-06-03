@@ -20,11 +20,11 @@ fn main() -> anyhow::Result<()> {
 
     let device = glim::cuda_backend::Device::new(0)?;
 
-    let config = glim::llama::Config::tiny_15m();
+    let config = glim::llama::Config::tiny_110m();
     let vocab_size = config.vocab_size;
-    // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
+    // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories110M.pt
     let model: glim::llama::Model<Backend> =
-        glim::llama::Model::new(config, &device, "stories15M.safetensors")?;
+        glim::llama::Model::new(config, &device, "stories110M.safetensors")?;
     let mut state: glim::llama::State<Backend> =
         glim::llama::State::new(1, model.config(), &device)?;
     let start_time = std::time::Instant::now();

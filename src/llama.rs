@@ -33,6 +33,21 @@ impl Config {
         }
     }
 
+    pub fn tiny_110m() -> Self {
+        Self {
+            dim: 768,
+            hidden_dim: 2048,
+            n_layers: 12,
+            n_heads: 12,
+            n_kv_heads: 12,
+            vocab_size: 32000,
+            seq_len: 1024,
+            norm_eps: 1e-5,
+            max_seq_len: 1024,
+            rope_theta: 10000.,
+        }
+    }
+
     fn head_dim(&self) -> usize {
         self.dim / self.n_heads
     }
