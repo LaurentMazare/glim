@@ -247,7 +247,7 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         let num_blocks_y = (dim as u32 + threads_y - 1) / threads_y;
 
         let ids_len = ids.len();
-        let ids = self.device.cuda.htod_sync_copy(&ids)?;
+        let ids = self.device.cuda.htod_sync_copy(ids)?;
         let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::INDEXING)?;
         let cfg = LaunchConfig {
             grid_dim: (num_blocks_x, num_blocks_y, 1),
