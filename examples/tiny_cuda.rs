@@ -1,6 +1,5 @@
 extern crate glim;
 use anyhow::Context;
-
 use glim::Backend;
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
@@ -20,20 +19,21 @@ fn main() -> anyhow::Result<()> {
 
     let device = glim::cuda_backend::Device::new(0)?;
 
-    let config = glim::llama::Config::tiny_15m();
-    let mut prs = B::cst(0., 32000, &device)?;
-    // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
+    let config = glim::llama::Config::tiny_110m();
+    let vocab_size = config.vocab_size;
+    // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories110M.pt
     let model: glim::llama::Model<B> =
-        glim::llama::Model::new(config, &device, "stories15M.safetensors")?;
+        glim::llama::Model::new(config, &device, "stories110M.safetensors")?;
     let mut state: glim::llama::State<B> = glim::llama::State::new(1, model.config(), &device)?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];
+    let mut prs_storage = unsafe { B::alloc_uninit(vocab_size, &device)? };
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
-        let prs = state.logits().softmax(&mut prs)?;
-        let prs = prs.to_data()?;
+        let prs = state.logits().softmax(&mut prs_storage)?;
+        let prs = prs.data_t()?;
         let distr = rand::distributions::WeightedIndex::new(prs.as_ref())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);

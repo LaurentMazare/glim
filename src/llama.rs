@@ -33,6 +33,20 @@ impl Config {
         }
     }
 
+    pub fn tiny_110m() -> Self {
+        Self {
+            dim: 768,
+            hidden_dim: 2048,
+            n_layers: 12,
+            n_heads: 12,
+            n_kv_heads: 12,
+            vocab_size: 32000,
+            norm_eps: 1e-5,
+            max_seq_len: 1024,
+            rope_theta: 10000.,
+        }
+    }
+
     pub fn llama2_7b() -> Self {
         Self {
             dim: 4096,
@@ -248,6 +262,7 @@ impl<B: BackendF<f32>> Model<B> {
         let h = self.config.n_heads;
         let d = self.config.dim / h;
         state.xs.index_select(&self.embedding, tokens)?;
+
         let pos = state.kv_caches[0].k().current_seq_len();
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             {
@@ -290,7 +305,6 @@ impl<B: BackendF<f32>> Model<B> {
                 let o = layer.attn.o_proj.fwd(&mut state.rms_xs, &attn_xs)?;
                 state.xs.add(&o)?;
             }
-
             {
                 let rms_xs = layer.rms2.fwd(&mut state.rms_xs, &state.xs)?;
                 // MLP

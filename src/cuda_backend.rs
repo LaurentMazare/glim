@@ -85,15 +85,21 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
 
     fn rope(
         &mut self,
-        _: &Self,
-        _: &Self,
+        cos: &Self,
+        sin: &Self,
         b: usize,
         h: usize,
         t: usize,
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let (bh, td) = ((b * h) as u32, (t * d) as u32);
+        let kname = kernel_name::<T>("rope");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ROPE)?;
+        let cfg = LaunchConfig::for_num_elems(bh * td);
+        let params = (&self.data, &cos.data, &sin.data, bh, td);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn gemm(
@@ -142,8 +148,8 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         let cfg = StridedBatchedConfig {
             batch_size: lhs_b as i32,
             gemm,
-            stride_a: (m * k) as i64,
-            stride_b: b_stride as i64,
+            stride_a: b_stride as i64,
+            stride_b: (m * k) as i64,
             stride_c: (m * n) as i64,
         };
         let lhs = &lhs.0.data.slice(lhs.1..);
@@ -153,7 +159,12 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn scale(&mut self, v: T, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let kname = kernel_name::<T>("scale");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &mut self.data, v);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn device(&self) -> &Self::Device {
@@ -170,40 +181,99 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
         dst_o: usize,
         src_o: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let kname = kernel_name::<T>("copy2d");
+        let (d1, d2, dst_s, src_s) = (d1 as u32, d2 as u32, dst_s as u32, src_s as u32);
+        let func = self.device.get_or_load_func(&kname, candle_kernels::FILL)?;
+        let cfg = LaunchConfig::for_num_elems(d1 * d2);
+        let src = src.data.slice(src_o..);
+        let dst = self.data.slice(dst_o..);
+        let params = (&src, &dst, d1, d2, src_s, dst_s);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn rope_i(
         &mut self,
-        _: &Self,
-        _: &Self,
+        cos: &Self,
+        sin: &Self,
         b: usize,
         h: usize,
         t: usize,
         d: usize,
         pos: usize,
     ) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let (bh, td) = ((b * h) as u32, (t * d) as u32);
+        let kname = kernel_name::<T>("rope_i");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ROPE)?;
+        let cfg = LaunchConfig::for_num_elems(bh * td);
+        let params = (&self.data, &cos.data, &sin.data, bh, td);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    fn transpose(&mut self, s: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()> {
-        anyhow::bail!("not implemented")
+    fn transpose(&mut self, src: &Self, dim1: usize, dim2: usize, dims: &[usize]) -> Result<()> {
+        let len: usize = dims.iter().product();
+        if dim1 == dim2 {
+            let src = src.data.slice(..len);
+            self.device.cuda.dtod_copy(&src, &mut self.data)?
+        } else {
+            let (dim1, dim2) = (usize::min(dim1, dim2), usize::max(dim1, dim2));
+            let d_i = dims[..dim1].iter().product::<usize>() as u32;
+            let d_j = dims[dim1 + 1..dim2].iter().product::<usize>() as u32;
+            let d_k = dims[(dim2 + 1)..].iter().product::<usize>() as u32;
+            let d1 = dims[dim1] as u32;
+            let d2 = dims[dim2] as u32;
+            let kname = kernel_name::<T>("transpose");
+            let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::LAYOUT)?;
+            let cfg = LaunchConfig::for_num_elems(len as u32);
+            let params = (len, d1, d2, d_i, d_j, d_k, &src.data, &mut self.data);
+            unsafe { func.launch(cfg, params) }?;
+        }
+        Ok(())
     }
 
     fn add_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let kname = kernel_name::<T>("add_assign");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &s.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn mul_assign(&mut self, s: &Self, len: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        let kname = kernel_name::<T>("mul_assign");
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::ARITHMETIC)?;
+        let cfg = LaunchConfig::for_num_elems(len as u32);
+        let params = (len, &s.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn index_select(&mut self, src: &Self, ids: &[u32], dim: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        const NUM_THREADS: u32 = 1024;
+
+        let kname = kernel_name::<T>("is_u32");
+        let threads_x = u32::min(NUM_THREADS, ids.len() as u32);
+        let threads_y = u32::min(NUM_THREADS / threads_x, dim as u32);
+        let num_blocks_x = (ids.len() as u32 + threads_x - 1) / threads_x;
+        let num_blocks_y = (dim as u32 + threads_y - 1) / threads_y;
+
+        let ids_len = ids.len();
+        let ids = self.device.cuda.htod_sync_copy(ids)?;
+        let func = self.device.get_or_load_func(&kname, crate::cuda_kernels::INDEXING)?;
+        let cfg = LaunchConfig {
+            grid_dim: (num_blocks_x, num_blocks_y, 1),
+            block_dim: (threads_x, threads_y, 1),
+            shared_mem_bytes: 0,
+        };
+        let params = (ids_len as i32, dim as i32, &ids, &src.data, &mut self.data);
+        unsafe { func.launch(cfg, params) }?;
+        Ok(())
     }
 
     fn from_vec(v: Vec<T>, device: &Self::Device) -> Result<Self> {
@@ -212,7 +282,9 @@ impl<T: CudaType> crate::Backend<T> for Storage<T> {
     }
 
     fn data(&self, len: usize) -> Result<std::borrow::Cow<'_, [T]>> {
-        anyhow::bail!("not implemented")
+        let data = self.data.slice(..len);
+        let data = self.device.cuda.dtoh_sync_copy(&data)?;
+        Ok(std::borrow::Cow::Owned(data))
     }
 
     unsafe fn alloc_uninit(len: usize, device: &Self::Device) -> Result<Self> {
@@ -252,7 +324,8 @@ impl<T: crate::WithDTypeF + CudaType> crate::BackendF<T> for Storage<T> {
     fn softmax(&mut self, src: &Self, dim_m1: usize, d: usize) -> Result<()> {
         let kname = kernel_name::<T>("softmax");
         let func = self.device.get_or_load_func(&kname, candle_kernels::REDUCE)?;
-        let cfg = LaunchConfig::for_num_elems((d * dim_m1) as u32);
+        let cfg =
+            LaunchConfig { grid_dim: (d as u32, 1, 1), block_dim: (1, 32, 1), shared_mem_bytes: 0 };
         let params = (&src.data, &mut self.data, dim_m1 as i32);
         unsafe { func.launch(cfg, params) }?;
         Ok(())
@@ -275,7 +348,7 @@ impl<T: crate::WithDTypeF + CudaType> crate::BackendF<T> for Storage<T> {
     }
 
     fn apply_causality_mask(&mut self, bh: usize, t1: usize, t2: usize) -> Result<()> {
-        anyhow::bail!("not implemented")
+        anyhow::bail!("not implemented: causality-mask")
     }
 }
 
