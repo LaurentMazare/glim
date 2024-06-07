@@ -1,11 +1,10 @@
 extern crate glim;
 use anyhow::Context;
-use glim::Backend as _B;
-
+use glim::Backend;
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
-type Backend = glim::cuda_backend::Storage<f32>;
+type B = glim::cuda_backend::Storage<f32>;
 
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "candle")]
@@ -23,14 +22,13 @@ fn main() -> anyhow::Result<()> {
     let config = glim::llama::Config::tiny_110m();
     let vocab_size = config.vocab_size;
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories110M.pt
-    let model: glim::llama::Model<Backend> =
+    let model: glim::llama::Model<B> =
         glim::llama::Model::new(config, &device, "stories110M.safetensors")?;
-    let mut state: glim::llama::State<Backend> =
-        glim::llama::State::new(1, model.config(), &device)?;
+    let mut state: glim::llama::State<B> = glim::llama::State::new(1, model.config(), &device)?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];
-    let mut prs_storage = unsafe { Backend::alloc_uninit(vocab_size, &device)? };
+    let mut prs_storage = unsafe { B::alloc_uninit(vocab_size, &device)? };
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
