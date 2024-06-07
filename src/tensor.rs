@@ -73,6 +73,11 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         self.shape.rank()
     }
 
+    pub fn to_data(&self) -> Result<std::borrow::Cow<'_, [T]>> {
+        let el_count = self.elem_count();
+        self.data.as_ref().data(el_count)
+    }
+
     pub fn new<S: Into<Shape>>(data: &'a mut B, shape: S) -> Result<Self> {
         let shape: Shape = shape.into();
         if data.len() < shape.elem_count() {
