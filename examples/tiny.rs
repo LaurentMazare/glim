@@ -1,13 +1,11 @@
 extern crate glim;
 use anyhow::Context;
-use glim::Backend;
+use glim::BackendF;
 
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
-type B = Vec<f32>;
-
-fn main() -> anyhow::Result<()> {
+fn run<B: BackendF<f32>>(dev: &B::Device) -> anyhow::Result<()> {
     #[cfg(feature = "candle")]
     {
         candle::display::set_line_width(140);
@@ -18,15 +16,15 @@ fn main() -> anyhow::Result<()> {
     let tokenizer = Tokenizer::from_file("tokenizer.json").unwrap();
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
 
-    let config = glim::llama::Config::tiny_15m();
+    let config = glim::llama::Config::tiny_110m();
     let vocab_size = config.vocab_size;
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
-    let model = glim::llama::Model::new(config, &(), "stories15M.safetensors")?;
-    let mut state = glim::llama::State::new(1, model.config(), &())?;
+    let model = glim::llama::Model::new(config, dev, "stories110M.safetensors")?;
+    let mut state = glim::llama::State::new(1, model.config(), dev)?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];
-    let mut prs_storage = unsafe { B::alloc_uninit(vocab_size, &())? };
+    let mut prs_storage = unsafe { B::alloc_uninit(vocab_size, dev)? };
     for _ in 0..200 {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
@@ -46,5 +44,17 @@ fn main() -> anyhow::Result<()> {
     );
     #[cfg(feature = "candle")]
     println!("{}", state.logits().to_candle()?);
+    Ok(())
+}
+
+#[cfg(not(feature = "cuda"))]
+fn main() -> anyhow::Result<()> {
+    run::<Vec<f32>>(&())?;
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn main() -> anyhow::Result<()> {
+    run::<Vec<f32>>(&())?;
     Ok(())
 }
