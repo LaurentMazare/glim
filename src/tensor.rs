@@ -61,7 +61,7 @@ impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
         Ok(self.dims()[dim])
     }
 
-    pub fn data_t(&self) -> Result<std::borrow::Cow<'_, [T]>> {
+    pub fn data(&self) -> Result<std::borrow::Cow<'_, [T]>> {
         let el_count = self.elem_count();
         self.data.as_ref().data(el_count)
     }
@@ -330,8 +330,8 @@ impl<'a, T: WithDTypeF, B: BackendF<T>> Tensor<'a, T, B> {
             if rhs_t { (rhs_stride_m1, rhs_stride_m2) } else { (rhs_stride_m2, rhs_stride_m1) };
 
         self.data.as_mut_ref().gemm(
-            lhs.data(),
-            rhs.data(),
+            lhs.storage_and_offset(),
+            rhs.storage_and_offset(),
             m,
             n,
             k,

@@ -27,8 +27,8 @@ impl<'a, T: WithDType, B: Backend<T>> TensorView<'a, T, B> {
         self.inner
     }
 
-    pub fn data(&self) -> (&B, usize) {
-        (self.inner.data().0, self.start_offset)
+    pub fn storage_and_offset(&self) -> (&B, usize) {
+        (self.inner.storage_and_offset().0, self.start_offset)
     }
 
     pub fn shape(&self) -> &Shape {
@@ -168,7 +168,7 @@ impl<'a, T: WithDType, B: Backend<T>> TensorView<'a, T, B> {
 pub trait TensorOrView<T: WithDType, B: Backend<T>> {
     fn shape(&self) -> &Shape;
     fn strides(&self) -> std::borrow::Cow<'_, [usize]>;
-    fn data(&self) -> (&B, usize);
+    fn storage_and_offset(&self) -> (&B, usize);
     fn rank(&self) -> usize {
         self.shape().rank()
     }
@@ -182,7 +182,7 @@ impl<'a, T: WithDType, B: Backend<T>> TensorOrView<T, B> for Tensor<'a, T, B> {
         self.shape()
     }
 
-    fn data(&self) -> (&B, usize) {
+    fn storage_and_offset(&self) -> (&B, usize) {
         (self.storage(), 0)
     }
 
@@ -195,8 +195,8 @@ impl<'a, T: WithDType, B: Backend<T>> TensorOrView<T, B> for TensorView<'a, T, B
     fn shape(&self) -> &Shape {
         self.shape()
     }
-    fn data(&self) -> (&B, usize) {
-        self.inner.data()
+    fn storage_and_offset(&self) -> (&B, usize) {
+        self.inner.storage_and_offset()
     }
     fn strides(&self) -> std::borrow::Cow<'_, [usize]> {
         std::borrow::Cow::Borrowed(self.strides())

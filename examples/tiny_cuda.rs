@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
         let prev_token = tokens.last().unwrap();
         model.fwd(&[*prev_token], &mut state)?;
         let prs = state.logits().softmax(&mut prs_storage)?;
-        let prs = prs.data_t()?;
+        let prs = prs.data()?;
         let distr = rand::distributions::WeightedIndex::new(prs.as_ref())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);
