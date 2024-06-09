@@ -55,6 +55,8 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(feature = "cuda")]
 fn main() -> anyhow::Result<()> {
-    run::<Vec<f32>>(&())?;
+    type B = glim::cuda_backend::Storage<f32>;
+    let device = glim::cuda_backend::Device::new(0)?;
+    run::<B>(&device)?;
     Ok(())
 }
