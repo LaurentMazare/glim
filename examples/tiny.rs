@@ -1,11 +1,14 @@
 extern crate glim;
 use anyhow::Context;
 use glim::BackendF;
+use half::bf16;
 
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
-fn run<B: BackendF<f32>>(dev: &B::Device) -> anyhow::Result<()> {
+const IN_FILENAME: &str = "llama2-7b.safetensors";
+
+fn run<B: BackendF<bf16>>(dev: &B::Device) -> anyhow::Result<()> {
     #[cfg(feature = "candle")]
     {
         candle::display::set_line_width(140);
@@ -16,10 +19,10 @@ fn run<B: BackendF<f32>>(dev: &B::Device) -> anyhow::Result<()> {
     let tokenizer = Tokenizer::from_file("tokenizer.json").unwrap();
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
 
-    let config = glim::llama::Config::tiny_110m();
+    let config = glim::llama::Config::llama2_7b();
     let vocab_size = config.vocab_size;
     // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
-    let model = glim::llama::Model::new(config, dev, "stories110M.safetensors")?;
+    let model = glim::llama::Model::new(config, dev, IN_FILENAME)?;
     let mut state = glim::llama::State::new(1, model.config(), dev)?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
@@ -47,15 +50,8 @@ fn run<B: BackendF<f32>>(dev: &B::Device) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
-    run::<Vec<f32>>(&())?;
-    Ok(())
-}
-
-#[cfg(feature = "cuda")]
-fn main() -> anyhow::Result<()> {
-    type B = glim::cuda_backend::Storage<f32>;
+    type B = glim::cuda_backend::Storage<bf16>;
     let device = glim::cuda_backend::Device::new(0)?;
     run::<B>(&device)?;
     Ok(())
