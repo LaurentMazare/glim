@@ -1,14 +1,14 @@
 extern crate glim;
 use anyhow::Context;
 use glim::BackendF;
-use half::bf16;
+use half::f16;
 
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
 const IN_FILENAME: &str = "llama2-7b.safetensors";
 
-fn run<B: BackendF<bf16>>(dev: &B::Device) -> anyhow::Result<()> {
+fn run<B: BackendF<f16>>(dev: &B::Device) -> anyhow::Result<()> {
     #[cfg(feature = "candle")]
     {
         candle::display::set_line_width(140);
@@ -51,7 +51,7 @@ fn run<B: BackendF<bf16>>(dev: &B::Device) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    type B = glim::cuda_backend::Storage<bf16>;
+    type B = glim::cuda_backend::Storage<f16>;
     let device = glim::cuda_backend::Device::new(0)?;
     run::<B>(&device)?;
     Ok(())

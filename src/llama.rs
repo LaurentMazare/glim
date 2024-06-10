@@ -1,8 +1,8 @@
 use crate::{tensor, BackendF, Shape, Tensor};
 use anyhow::Result;
-use half::bf16;
+use half::f16;
 
-type TensorS<B> = crate::TensorS<bf16, B>;
+type TensorS<B> = crate::TensorS<f16, B>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -67,7 +67,7 @@ impl Config {
     }
 }
 
-struct Linear<B: BackendF<bf16> + 'static> {
+struct Linear<B: BackendF<f16> + 'static> {
     w: TensorS<B>,
     #[allow(unused)]
     in_c: usize,
@@ -75,7 +75,7 @@ struct Linear<B: BackendF<bf16> + 'static> {
     out_c: usize,
 }
 
-impl<B: BackendF<bf16>> Linear<B> {
+impl<B: BackendF<f16>> Linear<B> {
     fn new(w: TensorS<B>, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
@@ -83,24 +83,24 @@ impl<B: BackendF<bf16>> Linear<B> {
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, bf16, B>) -> Result<Tensor<'a, bf16, B>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f16, B>) -> Result<Tensor<'a, f16, B>> {
         // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
         let mut dst = Tensor::new(dst, 1)?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, bf16, B>, src: &Tensor<'_, bf16, B>) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f16, B>, src: &Tensor<'_, f16, B>) -> Result<()> {
         dst.matmul_(src, &self.w, true)
     }
 }
 
-struct RmsNorm<B: BackendF<bf16>> {
+struct RmsNorm<B: BackendF<f16>> {
     alpha: TensorS<B>,
     eps: f32,
 }
 
-impl<B: BackendF<bf16>> RmsNorm<B> {
+impl<B: BackendF<f16>> RmsNorm<B> {
     fn new(w: TensorS<B>, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
@@ -108,24 +108,24 @@ impl<B: BackendF<bf16>> RmsNorm<B> {
         Ok(Self { alpha: w, eps })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, bf16, B>) -> Result<Tensor<'a, bf16, B>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f16, B>) -> Result<Tensor<'a, f16, B>> {
         let mut dst = Tensor::new(dst, src.shape())?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, bf16, B>, src: &Tensor<'_, bf16, B>) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, f16, B>, src: &Tensor<'_, f16, B>) -> Result<()> {
         dst.rms_norm(src, &self.alpha, self.eps)
     }
 }
 
-struct Mlp<B: BackendF<bf16>> {
+struct Mlp<B: BackendF<f16>> {
     c_fc1: Linear<B>,
     c_fc2: Linear<B>,
     c_proj: Linear<B>,
 }
 
-struct Attention<B: BackendF<bf16>> {
+struct Attention<B: BackendF<f16>> {
     q_proj: Linear<B>,
     k_proj: Linear<B>,
     v_proj: Linear<B>,
@@ -133,14 +133,14 @@ struct Attention<B: BackendF<bf16>> {
     head_dim: usize,
 }
 
-struct Layer<B: BackendF<bf16>> {
+struct Layer<B: BackendF<f16>> {
     rms1: RmsNorm<B>,
     attn: Attention<B>,
     rms2: RmsNorm<B>,
     mlp: Mlp<B>,
 }
 
-pub struct Model<B: BackendF<bf16>> {
+pub struct Model<B: BackendF<f16>> {
     embedding: TensorS<B>,
     layers: Vec<Layer<B>>,
     ln_f: RmsNorm<B>,
@@ -148,7 +148,7 @@ pub struct Model<B: BackendF<bf16>> {
     config: Config,
 }
 
-pub struct State<B: BackendF<bf16>> {
+pub struct State<B: BackendF<f16>> {
     xs: TensorS<B>,
     fc1_xs: B,
     fc2_xs: B,
@@ -167,13 +167,13 @@ pub struct State<B: BackendF<bf16>> {
     cos: TensorS<B>,
     sin: TensorS<B>,
     b_sz: usize,
-    kv_caches: Vec<crate::kv_cache::KvCache<'static, bf16, B>>,
+    kv_caches: Vec<crate::kv_cache::KvCache<'static, f16, B>>,
 }
 
-impl<B: BackendF<bf16>> State<B> {
+impl<B: BackendF<f16>> State<B> {
     pub fn new(b_sz: usize, cfg: &Config, dev: &B::Device) -> Result<Self> {
-        let b_cst = |s| B::cst(bf16::ZERO, s, dev);
-        let t_cst = |s| Tensor::cst(bf16::ZERO, s, dev);
+        let b_cst = |s| B::cst(f16::ZERO, s, dev);
+        let t_cst = |s| Tensor::cst(f16::ZERO, s, dev);
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
         let logits = t_cst((b_sz, seq_len, cfg.vocab_size))?;
@@ -194,15 +194,15 @@ impl<B: BackendF<bf16>> State<B> {
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
-            .map(|i| bf16::from_f32(1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32)))
+            .map(|i| f16::from_f32(1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32)))
             .collect();
         let theta = Tensor::from_vec(theta, (1, head_dim / 2), dev)?;
         let idx_theta = Tensor::from_vec(
-            (0..max_seq_len).map(|v| bf16::from_f32(v as f32)).collect::<Vec<_>>(),
+            (0..max_seq_len).map(|v| f16::from_f32(v as f32)).collect::<Vec<_>>(),
             (max_seq_len, 1),
             dev,
         )?;
-        let mut mm = Tensor::cst(bf16::ZERO, theta.elem_count() * idx_theta.elem_count(), dev)?;
+        let mut mm = Tensor::cst(f16::ZERO, theta.elem_count() * idx_theta.elem_count(), dev)?;
         mm.matmul_(&idx_theta, &theta, false)?;
         let mut cos = mm.copy()?;
         cos.cos()?;
@@ -247,7 +247,7 @@ impl<B: BackendF<bf16>> State<B> {
     }
 }
 
-impl<B: BackendF<bf16>> Model<B> {
+impl<B: BackendF<f16>> Model<B> {
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -276,12 +276,12 @@ impl<B: BackendF<bf16>> Model<B> {
 
                     attn_q.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_q = attn_q.transpose(&mut state.attn_q_t, 1, 2)?;
-                    attn_q.rope_i(&state.cos, &state.sin, pos)?;
+                    attn_q.rope(&state.cos, &state.sin, pos)?;
                     attn_q.reshape((b_sz * h, seq_len, d))?;
 
                     attn_k.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_k = attn_k.transpose(&mut state.attn_k_t, 1, 2)?;
-                    attn_k.rope_i(&state.cos, &state.sin, pos)?;
+                    attn_k.rope(&state.cos, &state.sin, pos)?;
 
                     attn_v.reshape((b_sz, seq_len, h, d))?;
                     let attn_v = attn_v.transpose(&mut state.attn_v_t, 1, 2)?;
@@ -292,8 +292,7 @@ impl<B: BackendF<bf16>> Model<B> {
                     // TODO: repeat-kv
                     let mut attn_scores =
                         tensor::matmul(&mut state.attn_scores, &attn_q, &k, true)?;
-                    attn_scores
-                        .scale(bf16::from_f32(1f32 / (layer.attn.head_dim as f32).sqrt()))?;
+                    attn_scores.scale(f16::from_f32(1f32 / (layer.attn.head_dim as f32).sqrt()))?;
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
                     let attn_sm = attn_scores.softmax(&mut state.attn_sm)?;
@@ -330,13 +329,13 @@ impl<B: BackendF<bf16>> Model<B> {
             let data = data.tensor(name)?;
             let shape: Shape = data.shape().into();
             let mut data = std::io::Cursor::new(data.data());
-            let mut bf16_data = vec![0u16; shape.elem_count()];
+            let mut f16_data = vec![0u16; shape.elem_count()];
             byteorder::ReadBytesExt::read_u16_into::<byteorder::LittleEndian>(
                 &mut data,
-                &mut bf16_data,
+                &mut f16_data,
             )?;
-            let bf16_data = bf16_data.into_iter().map(bf16::from_bits).collect::<Vec<_>>();
-            let data = Tensor::from_vec(bf16_data, shape, dev)?;
+            let f16_data = f16_data.into_iter().map(f16::from_bits).collect::<Vec<_>>();
+            let data = Tensor::from_vec(f16_data, shape, dev)?;
             Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;
