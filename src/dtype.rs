@@ -65,10 +65,10 @@ impl WithDType for f32 {
     fn from_be_bytes(dst: &mut [Self], src: &[u8]) {
         for (i, v) in dst.iter_mut().enumerate() {
             *v = f32::from_bits(u32::from_be_bytes([
-                src[4 * i],
-                src[4 * i + 1],
-                src[4 * i + 2],
                 src[4 * i + 3],
+                src[4 * i + 2],
+                src[4 * i + 1],
+                src[4 * i],
             ]))
         }
     }
