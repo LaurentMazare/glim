@@ -60,6 +60,7 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
-    run::<Vec<f16>>(&())?;
+    type B = glim::cpu_backend::Storage<f16>;
+    run::<B>(&())?;
     Ok(())
 }

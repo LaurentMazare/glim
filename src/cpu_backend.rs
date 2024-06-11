@@ -2,6 +2,8 @@ use crate::{WithDType, WithDTypeF};
 use anyhow::Result;
 use rayon::prelude::*;
 
+pub type Storage<T> = Vec<T>;
+
 impl<T: WithDType> crate::Backend<T> for Vec<T> {
     type Device = ();
 
