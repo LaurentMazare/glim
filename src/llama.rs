@@ -14,6 +14,7 @@ pub struct Config {
     pub norm_eps: f32,
     pub max_seq_len: usize,
     pub rope_theta: f32,
+    pub rope_i: bool,
 }
 
 impl Config {
@@ -28,6 +29,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 256,
             rope_theta: 10000.,
+            rope_i: true,
         }
     }
 
@@ -42,6 +44,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 1024,
             rope_theta: 10000.,
+            rope_i: true,
         }
     }
 
@@ -56,6 +59,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 4096,
             rope_theta: 10000.,
+            rope_i: false,
         }
     }
 
@@ -273,12 +277,20 @@ impl<T: WithDTypeF, B: BackendF<T>> Model<T, B> {
 
                     attn_q.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_q = attn_q.transpose(&mut state.attn_q_t, 1, 2)?;
-                    attn_q.rope(&state.cos, &state.sin, pos)?;
+                    if self.config.rope_i {
+                        attn_q.rope_i(&state.cos, &state.sin, pos)?;
+                    } else {
+                        attn_q.rope(&state.cos, &state.sin, pos)?;
+                    }
                     attn_q.reshape((b_sz * h, seq_len, d))?;
 
                     attn_k.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_k = attn_k.transpose(&mut state.attn_k_t, 1, 2)?;
-                    attn_k.rope(&state.cos, &state.sin, pos)?;
+                    if self.config.rope_i {
+                        attn_k.rope_i(&state.cos, &state.sin, pos)?;
+                    } else {
+                        attn_k.rope(&state.cos, &state.sin, pos)?;
+                    }
 
                     attn_v.reshape((b_sz, seq_len, h, d))?;
                     let attn_v = attn_v.transpose(&mut state.attn_v_t, 1, 2)?;

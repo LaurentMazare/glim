@@ -50,9 +50,16 @@ fn run<B: BackendF<f16>>(dev: &B::Device) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cuda")]
 fn main() -> anyhow::Result<()> {
     type B = glim::cuda_backend::Storage<f16>;
     let device = glim::cuda_backend::Device::new(0)?;
     run::<B>(&device)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "cuda"))]
+fn main() -> anyhow::Result<()> {
+    run::<Vec<f16>>(&())?;
     Ok(())
 }
