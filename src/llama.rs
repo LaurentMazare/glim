@@ -325,14 +325,12 @@ impl<T: WithDTypeF, B: BackendF<T>> Model<T, B> {
         let get = |name: &str| {
             let data = data.tensor(name)?;
             let shape: Shape = data.shape().into();
-            let mut data = std::io::Cursor::new(data.data());
-            let mut v_data = vec![0u16; shape.elem_count()];
-            byteorder::ReadBytesExt::read_u16_into::<byteorder::LittleEndian>(
-                &mut data,
-                &mut v_data,
-            )?;
-            let v_data = v_data.into_iter().map(f16::from_bits).collect::<Vec<_>>();
-            let data = Tensor::from_vec(v_data, shape, dev)?;
+            let mut t_data = vec![T::zero(); shape.elem_count()];
+            if std::mem::size_of::<T>() * shape.elem_count() != data.data().len() {
+                anyhow::bail!("unexpected len for {name}: {shape:?} - {} bytes", data.data().len())
+            }
+            T::from_be_bytes(&mut t_data, data.data());
+            let data = Tensor::from_vec(t_data, shape, dev)?;
             Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;

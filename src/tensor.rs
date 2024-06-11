@@ -1,4 +1,4 @@
-use crate::{Backend, BackendF, Dim, Shape, WithDType, WithDTypeF};
+use crate::{Backend, BackendF, DType, Dim, Shape, WithDType, WithDTypeF};
 use anyhow::Result;
 
 pub enum CowMut<'a, T: WithDType, B: Backend<T>> {
@@ -31,7 +31,7 @@ pub struct Tensor<'a, T: WithDType, B: Backend<T>> {
 }
 
 impl<'a, T: WithDType, B: Backend<T>> Tensor<'a, T, B> {
-    pub fn dtype(&self) -> crate::DType {
+    pub fn dtype(&self) -> DType {
         T::DTYPE
     }
 
