@@ -24,8 +24,8 @@ for i in range(layers):
     for c in ("q", "k", "v", "o"):
         tensors[f"{dst_prefix}.attention.w{c}.weight"] = all_tensors[f"{src_prefix}.self_attn.{c}_proj.weight"]
     tensors[f"{dst_prefix}.feed_forward.w2.weight"] = all_tensors[f"{src_prefix}.mlp.down_proj.weight"]
-    tensors[f"{dst_prefix}.feed_forward.w3.weight"] = all_tensors[f"{src_prefix}.mlp.gate_proj.weight"]
-    tensors[f"{dst_prefix}.feed_forward.w1.weight"] = all_tensors[f"{src_prefix}.mlp.up_proj.weight"]
+    tensors[f"{dst_prefix}.feed_forward.w1.weight"] = all_tensors[f"{src_prefix}.mlp.gate_proj.weight"]
+    tensors[f"{dst_prefix}.feed_forward.w3.weight"] = all_tensors[f"{src_prefix}.mlp.up_proj.weight"]
     tensors[f"{dst_prefix}.attention_norm.weight"] = all_tensors[f"{src_prefix}.input_layernorm.weight"]
     tensors[f"{dst_prefix}.ffn_norm.weight"] = all_tensors[f"{src_prefix}.post_attention_layernorm.weight"]
 

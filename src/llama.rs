@@ -1,7 +1,5 @@
-use crate::{tensor, BackendF, Shape, Tensor};
+use crate::{tensor, BackendF, Shape, Tensor, TensorS, WithDTypeF};
 use anyhow::Result;
-
-type TensorS<B> = crate::TensorS<f32, B>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -16,6 +14,7 @@ pub struct Config {
     pub norm_eps: f32,
     pub max_seq_len: usize,
     pub rope_theta: f32,
+    pub rope_i: bool,
 }
 
 impl Config {
@@ -30,6 +29,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 256,
             rope_theta: 10000.,
+            rope_i: true,
         }
     }
 
@@ -44,6 +44,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 1024,
             rope_theta: 10000.,
+            rope_i: true,
         }
     }
 
@@ -58,6 +59,7 @@ impl Config {
             norm_eps: 1e-5,
             max_seq_len: 4096,
             rope_theta: 10000.,
+            rope_i: false,
         }
     }
 
@@ -66,89 +68,89 @@ impl Config {
     }
 }
 
-struct Linear<B: BackendF<f32> + 'static> {
-    w: TensorS<B>,
+struct Linear<T: WithDTypeF, B: BackendF<T> + 'static> {
+    w: TensorS<T, B>,
     #[allow(unused)]
     in_c: usize,
     #[allow(unused)]
     out_c: usize,
 }
 
-impl<B: BackendF<f32>> Linear<B> {
-    fn new(w: TensorS<B>, in_c: usize, out_c: usize) -> Result<Self> {
+impl<T: WithDTypeF, B: BackendF<T>> Linear<T, B> {
+    fn new(w: TensorS<T, B>, in_c: usize, out_c: usize) -> Result<Self> {
         if w.dims() != [out_c, in_c] {
             anyhow::bail!("unexpected shape in linear {:?}, in: {in_c}, out: {out_c}", w.shape())
         }
         Ok(Self { w, in_c, out_c })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f32, B>) -> Result<Tensor<'a, f32, B>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, T, B>) -> Result<Tensor<'a, T, B>> {
         // TODO: use the proper dst shape here though 1 will work as matmul will reshape its dst.
         let mut dst = Tensor::new(dst, 1)?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32, B>, src: &Tensor<'_, f32, B>) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, T, B>, src: &Tensor<'_, T, B>) -> Result<()> {
         dst.matmul_(src, &self.w, true)
     }
 }
 
-struct RmsNorm<B: BackendF<f32>> {
-    alpha: TensorS<B>,
+struct RmsNorm<T: WithDTypeF, B: BackendF<T>> {
+    alpha: TensorS<T, B>,
     eps: f32,
 }
 
-impl<B: BackendF<f32>> RmsNorm<B> {
-    fn new(w: TensorS<B>, eps: f32, dim_m1: usize) -> Result<Self> {
+impl<T: WithDTypeF, B: BackendF<T>> RmsNorm<T, B> {
+    fn new(w: TensorS<T, B>, eps: f32, dim_m1: usize) -> Result<Self> {
         if w.dims() != [dim_m1] {
             anyhow::bail!("unexpected shape in rms_norm {:?} {dim_m1}", w.shape())
         }
         Ok(Self { alpha: w, eps })
     }
 
-    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, f32, B>) -> Result<Tensor<'a, f32, B>> {
+    fn fwd<'a>(&self, dst: &'a mut B, src: &Tensor<'_, T, B>) -> Result<Tensor<'a, T, B>> {
         let mut dst = Tensor::new(dst, src.shape())?;
         self.fwd_inplace(&mut dst, src)?;
         Ok(dst)
     }
 
-    fn fwd_inplace(&self, dst: &mut Tensor<'_, f32, B>, src: &Tensor<'_, f32, B>) -> Result<()> {
+    fn fwd_inplace(&self, dst: &mut Tensor<'_, T, B>, src: &Tensor<'_, T, B>) -> Result<()> {
         dst.rms_norm(src, &self.alpha, self.eps)
     }
 }
 
-struct Mlp<B: BackendF<f32>> {
-    c_fc1: Linear<B>,
-    c_fc2: Linear<B>,
-    c_proj: Linear<B>,
+struct Mlp<T: WithDTypeF, B: BackendF<T>> {
+    c_fc1: Linear<T, B>,
+    c_fc2: Linear<T, B>,
+    c_proj: Linear<T, B>,
 }
 
-struct Attention<B: BackendF<f32>> {
-    q_proj: Linear<B>,
-    k_proj: Linear<B>,
-    v_proj: Linear<B>,
-    o_proj: Linear<B>,
+struct Attention<T: WithDTypeF, B: BackendF<T>> {
+    q_proj: Linear<T, B>,
+    k_proj: Linear<T, B>,
+    v_proj: Linear<T, B>,
+    o_proj: Linear<T, B>,
     head_dim: usize,
 }
 
-struct Layer<B: BackendF<f32>> {
-    rms1: RmsNorm<B>,
-    attn: Attention<B>,
-    rms2: RmsNorm<B>,
-    mlp: Mlp<B>,
+struct Layer<T: WithDTypeF, B: BackendF<T>> {
+    rms1: RmsNorm<T, B>,
+    attn: Attention<T, B>,
+    rms2: RmsNorm<T, B>,
+    mlp: Mlp<T, B>,
 }
 
-pub struct Model<B: BackendF<f32>> {
-    embedding: TensorS<B>,
-    layers: Vec<Layer<B>>,
-    ln_f: RmsNorm<B>,
-    lm_head: Linear<B>,
+pub struct Model<T: WithDTypeF, B: BackendF<T>> {
+    embedding: TensorS<T, B>,
+    layers: Vec<Layer<T, B>>,
+    ln_f: RmsNorm<T, B>,
+    lm_head: Linear<T, B>,
     config: Config,
 }
 
-pub struct State<B: BackendF<f32>> {
-    xs: TensorS<B>,
+pub struct State<T: WithDTypeF, B: BackendF<T>> {
+    xs: TensorS<T, B>,
     fc1_xs: B,
     fc2_xs: B,
     rms_xs: B,
@@ -162,17 +164,17 @@ pub struct State<B: BackendF<f32>> {
     attn_scores: B,
     attn_xs: B,
     attn_xs_t: B,
-    logits: TensorS<B>,
-    cos: TensorS<B>,
-    sin: TensorS<B>,
+    logits: TensorS<T, B>,
+    cos: TensorS<T, B>,
+    sin: TensorS<T, B>,
     b_sz: usize,
-    kv_caches: Vec<crate::kv_cache::KvCache<'static, f32, B>>,
+    kv_caches: Vec<crate::kv_cache::KvCache<'static, T, B>>,
 }
 
-impl<B: BackendF<f32>> State<B> {
+impl<T: WithDTypeF, B: BackendF<T>> State<T, B> {
     pub fn new(b_sz: usize, cfg: &Config, dev: &B::Device) -> Result<Self> {
-        let b_cst = |s| B::cst(0., s, dev);
-        let t_cst = |s| Tensor::cst(0., s, dev);
+        let b_cst = |s| B::cst(T::zero(), s, dev);
+        let t_cst = |s| Tensor::cst(T::zero(), s, dev);
         let seq_len = 1;
         let max_seq_len = cfg.max_seq_len;
         let logits = t_cst((b_sz, seq_len, cfg.vocab_size))?;
@@ -193,15 +195,15 @@ impl<B: BackendF<f32>> State<B> {
         let head_dim = cfg.head_dim();
         let theta: Vec<_> = (0..head_dim)
             .step_by(2)
-            .map(|i| 1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32))
+            .map(|i| T::from_f32(1f32 / cfg.rope_theta.powf(i as f32 / head_dim as f32)))
             .collect();
         let theta = Tensor::from_vec(theta, (1, head_dim / 2), dev)?;
         let idx_theta = Tensor::from_vec(
-            (0..max_seq_len).map(|v| v as f32).collect::<Vec<_>>(),
+            (0..max_seq_len).map(|v| T::from_f32(v as f32)).collect::<Vec<_>>(),
             (max_seq_len, 1),
             dev,
         )?;
-        let mut mm = Tensor::cst(0., theta.elem_count() * idx_theta.elem_count(), dev)?;
+        let mut mm = Tensor::cst(T::zero(), theta.elem_count() * idx_theta.elem_count(), dev)?;
         mm.matmul_(&idx_theta, &theta, false)?;
         let mut cos = mm.copy()?;
         cos.cos()?;
@@ -241,17 +243,17 @@ impl<B: BackendF<f32>> State<B> {
         })
     }
 
-    pub fn logits(&self) -> &TensorS<B> {
+    pub fn logits(&self) -> &TensorS<T, B> {
         &self.logits
     }
 }
 
-impl<B: BackendF<f32>> Model<B> {
+impl<T: WithDTypeF, B: BackendF<T>> Model<T, B> {
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    pub fn fwd(&self, tokens: &[u32], state: &mut State<B>) -> Result<()> {
+    pub fn fwd(&self, tokens: &[u32], state: &mut State<T, B>) -> Result<()> {
         let (b_sz, seq_len) = (1, tokens.len());
         if state.b_sz != b_sz {
             anyhow::bail!("batch size mismatch {} {b_sz}", state.b_sz)
@@ -275,12 +277,20 @@ impl<B: BackendF<f32>> Model<B> {
 
                     attn_q.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_q = attn_q.transpose(&mut state.attn_q_t, 1, 2)?;
-                    attn_q.rope_i(&state.cos, &state.sin, pos)?;
+                    if self.config.rope_i {
+                        attn_q.rope_i(&state.cos, &state.sin, pos)?;
+                    } else {
+                        attn_q.rope(&state.cos, &state.sin, pos)?;
+                    }
                     attn_q.reshape((b_sz * h, seq_len, d))?;
 
                     attn_k.reshape((b_sz, seq_len, h, d))?;
                     let mut attn_k = attn_k.transpose(&mut state.attn_k_t, 1, 2)?;
-                    attn_k.rope_i(&state.cos, &state.sin, pos)?;
+                    if self.config.rope_i {
+                        attn_k.rope_i(&state.cos, &state.sin, pos)?;
+                    } else {
+                        attn_k.rope(&state.cos, &state.sin, pos)?;
+                    }
 
                     attn_v.reshape((b_sz, seq_len, h, d))?;
                     let attn_v = attn_v.transpose(&mut state.attn_v_t, 1, 2)?;
@@ -291,7 +301,7 @@ impl<B: BackendF<f32>> Model<B> {
                     // TODO: repeat-kv
                     let mut attn_scores =
                         tensor::matmul(&mut state.attn_scores, &attn_q, &k, true)?;
-                    attn_scores.scale(1f32 / (layer.attn.head_dim as f32).sqrt())?;
+                    attn_scores.scale(T::from_f32(1f32 / (layer.attn.head_dim as f32).sqrt()))?;
                     // no causal mask, as the sequence length is 1.
                     // state.attn_scores.apply_causality_mask()?;
                     let attn_sm = attn_scores.softmax(&mut state.attn_sm)?;
@@ -327,13 +337,12 @@ impl<B: BackendF<f32>> Model<B> {
         let get = |name: &str| {
             let data = data.tensor(name)?;
             let shape: Shape = data.shape().into();
-            let mut data = std::io::Cursor::new(data.data());
-            let mut f32_data = vec![0f32; shape.elem_count()];
-            byteorder::ReadBytesExt::read_f32_into::<byteorder::LittleEndian>(
-                &mut data,
-                &mut f32_data,
-            )?;
-            let data = Tensor::from_vec(f32_data, shape, dev)?;
+            let mut t_data = vec![T::zero(); shape.elem_count()];
+            if std::mem::size_of::<T>() * shape.elem_count() != data.data().len() {
+                anyhow::bail!("unexpected len for {name}: {shape:?} - {} bytes", data.data().len())
+            }
+            T::from_be_bytes(&mut t_data, data.data());
+            let data = Tensor::from_vec(t_data, shape, dev)?;
             Ok::<_, anyhow::Error>(data)
         };
         let embedding = get("tok_embeddings.weight")?;
