@@ -336,6 +336,15 @@ impl<T: WithDTypeF, B: BackendF<T>> Model<T, B> {
         let data = safetensors::SafeTensors::deserialize(&data)?;
         let get = |name: &str| {
             let data = data.tensor(name)?;
+            let dtype = match data.dtype() {
+                safetensors::Dtype::BF16 => crate::DType::BF16,
+                safetensors::Dtype::F16 => crate::DType::F16,
+                safetensors::Dtype::F32 => crate::DType::F32,
+                dt => anyhow::bail!("unexpected dtype for {name}: {dt:?}"),
+            };
+            if dtype != T::DTYPE {
+                anyhow::bail!("safetensors uses {dtype:?}, expected {:?}", T::DTYPE);
+            }
             let shape: Shape = data.shape().into();
             let mut t_data = vec![T::zero(); shape.elem_count()];
             if std::mem::size_of::<T>() * shape.elem_count() != data.data().len() {

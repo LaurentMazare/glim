@@ -1,6 +1,6 @@
 use half::{bf16, f16};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DType {
     F16,
     BF16,
