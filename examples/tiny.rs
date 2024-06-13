@@ -1,14 +1,51 @@
 extern crate glim;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use glim::BackendF;
 use half::f16;
 
+use glim::llama::{Config, Model, State};
 use rand::{distributions::Distribution, SeedableRng};
 use tokenizers::Tokenizer;
 
-const IN_FILENAME: &str = "llama2-7b.safetensors";
+#[derive(Debug, Copy, Clone)]
+enum Which {
+    Tiny15m,
+    Tiny110m,
+    Llama2_7b,
+}
 
-fn run<B: BackendF<f16>>(dev: &B::Device) -> anyhow::Result<()> {
+impl Which {
+    fn config(&self) -> Config {
+        match self {
+            Self::Tiny15m => Config::tiny_15m(),
+            Self::Tiny110m => Config::tiny_110m(),
+            Self::Llama2_7b => Config::llama2_7b(),
+        }
+    }
+
+    fn weight_file(&self) -> &'static str {
+        match self {
+            // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
+            Self::Tiny15m => "stories15M.safetensors",
+            Self::Tiny110m => "stories110M.safetensors",
+            Self::Llama2_7b => "llama2-7b.safetensors",
+        }
+    }
+
+    fn from_cli_args() -> Result<Self> {
+        let args: Vec<String> = std::env::args().collect();
+        let args: Vec<&str> = args.iter().map(|v| v.as_str()).collect();
+        let w = match args.as_slice() {
+            [_] | [_, "tiny15m"] => Self::Tiny15m,
+            [_, "tiny110m"] => Self::Tiny110m,
+            [_, "7b"] => Self::Llama2_7b,
+            args => anyhow::bail!("unexpected cli arguments {args:?}"),
+        };
+        Ok(w)
+    }
+}
+
+fn run<B: BackendF<f16>>(which: Which, dev: &B::Device) -> anyhow::Result<()> {
     #[cfg(feature = "candle")]
     {
         candle::display::set_line_width(140);
@@ -19,11 +56,10 @@ fn run<B: BackendF<f16>>(dev: &B::Device) -> anyhow::Result<()> {
     let tokenizer = Tokenizer::from_file("tokenizer.json").unwrap();
     let mut rng = rand::rngs::StdRng::seed_from_u64(42424242);
 
-    let config = glim::llama::Config::llama2_7b();
+    let config = which.config();
     let vocab_size = config.vocab_size;
-    // Converted from https://huggingface.co/karpathy/tinyllamas/blob/main/stories15M.pt
-    let model = glim::llama::Model::new(config, dev, IN_FILENAME)?;
-    let mut state = glim::llama::State::new(1, model.config(), dev)?;
+    let model = Model::new(config, dev, which.weight_file())?;
+    let mut state = State::new(1, model.config(), dev)?;
     let start_time = std::time::Instant::now();
     let bos_token = tokenizer.token_to_id("<s>").context("no bos token")?;
     let mut tokens = vec![bos_token];
@@ -51,16 +87,18 @@ fn run<B: BackendF<f16>>(dev: &B::Device) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "cuda")]
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     type B = glim::cuda_backend::Storage<f16>;
     let device = glim::cuda_backend::Device::new(0)?;
-    run::<B>(&device)?;
+    let which = Which::from_cli_args()?;
+    run::<B>(which, &device)?;
     Ok(())
 }
 
 #[cfg(not(feature = "cuda"))]
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     type B = glim::cpu_backend::Storage<f16>;
-    run::<B>(&())?;
+    let which = Which::from_cli_args()?;
+    run::<B>(which, &())?;
     Ok(())
 }
