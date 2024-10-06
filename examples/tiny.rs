@@ -45,7 +45,15 @@ impl Which {
     }
 }
 
-fn run<B: BackendF<f16>>(which: Which, dev: &B::Device) -> anyhow::Result<()> {
+fn run<B, T>(which: Which, dev: &B::Device) -> anyhow::Result<()>
+where
+    B: BackendF<T>,
+    T: glim::WithDTypeF
+        + rand::distributions::uniform::SampleUniform
+        + Default
+        + Copy
+        + for<'a> std::ops::AddAssign<&'a T>,
+{
     #[cfg(feature = "candle")]
     {
         candle::display::set_line_width(140);
@@ -88,17 +96,33 @@ fn run<B: BackendF<f16>>(which: Which, dev: &B::Device) -> anyhow::Result<()> {
 
 #[cfg(feature = "cuda")]
 fn main() -> Result<()> {
-    type B = glim::cuda_backend::Storage<f16>;
     let device = glim::cuda_backend::Device::new(0)?;
     let which = Which::from_cli_args()?;
-    run::<B>(which, &device)?;
+    match which {
+        Which::Llama2_7b => {
+            type B = glim::cuda_backend::Storage<f16>;
+            run::<B, f16>(which, &device)?;
+        }
+        _ => {
+            type B = glim::cuda_backend::Storage<f32>;
+            run::<B, f32>(which, &device)?;
+        }
+    };
     Ok(())
 }
 
 #[cfg(not(feature = "cuda"))]
 fn main() -> Result<()> {
-    type B = glim::cpu_backend::Storage<f16>;
     let which = Which::from_cli_args()?;
-    run::<B>(which, &())?;
+    match which {
+        Which::Llama2_7b => {
+            type B = glim::cpu_backend::Storage<f16>;
+            run::<B, f16>(which, &())?;
+        }
+        _ => {
+            type B = glim::cpu_backend::Storage<f32>;
+            run::<B, f32>(which, &())?;
+        }
+    }
     Ok(())
 }
