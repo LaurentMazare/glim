@@ -1,4 +1,4 @@
-use crate::{shape::Dim, Backend, Shape, Tensor, WithDType};
+use crate::{Backend, Shape, Tensor, WithDType, shape::Dim};
 use anyhow::Result;
 
 #[derive(Clone)]

@@ -1,4 +1,4 @@
-use crate::{tensor, BackendF, Shape, Tensor, TensorS, WithDTypeF};
+use crate::{BackendF, Shape, Tensor, TensorS, WithDTypeF, tensor};
 use anyhow::Result;
 
 #[derive(Debug, Clone)]

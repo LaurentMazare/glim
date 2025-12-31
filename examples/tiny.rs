@@ -4,7 +4,7 @@ use glim::BackendF;
 use half::f16;
 
 use glim::llama::{Config, Model, State};
-use rand::{distributions::Distribution, SeedableRng};
+use rand::{SeedableRng, distributions::Distribution};
 use tokenizers::Tokenizer;
 
 #[derive(Debug, Copy, Clone)]

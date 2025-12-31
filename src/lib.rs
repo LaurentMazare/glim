@@ -15,7 +15,7 @@ pub mod cuda_kernels;
 
 pub use backend::{Backend, BackendF};
 pub use dtype::{DType, WithDType, WithDTypeF};
-pub use shape::{Dim, Shape, D};
+pub use shape::{D, Dim, Shape};
 pub use tensor::Tensor;
 pub use tensor_view::{TensorOrView, TensorView};
 

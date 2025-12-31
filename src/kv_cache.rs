@@ -1,4 +1,4 @@
-use crate::{shape::Dim, Backend, Shape, Tensor, TensorView, WithDType};
+use crate::{Backend, Shape, Tensor, TensorView, WithDType, shape::Dim};
 use anyhow::Result;
 
 pub struct Cache<'a, T: WithDType, B: Backend<T>> {
