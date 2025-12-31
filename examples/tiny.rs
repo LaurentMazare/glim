@@ -4,7 +4,8 @@ use glim::BackendF;
 use half::f16;
 
 use glim::llama::{Config, Model, State};
-use rand::{SeedableRng, distributions::Distribution};
+use rand::SeedableRng;
+use rand::distr::Distribution;
 use tokenizers::Tokenizer;
 
 #[derive(Debug, Copy, Clone)]
@@ -49,7 +50,8 @@ fn run<B, T>(which: Which, dev: &B::Device) -> anyhow::Result<()>
 where
     B: BackendF<T>,
     T: glim::WithDTypeF
-        + rand::distributions::uniform::SampleUniform
+        + rand::distr::uniform::SampleUniform
+        + rand::distr::weighted::Weight
         + Default
         + Copy
         + for<'a> std::ops::AddAssign<&'a T>,
@@ -77,7 +79,7 @@ where
         model.fwd(&[*prev_token], &mut state)?;
         let prs = state.logits().softmax(&mut prs_storage)?;
         let prs = prs.data()?;
-        let distr = rand::distributions::WeightedIndex::new(prs.as_ref())?;
+        let distr = rand::distr::weighted::WeightedIndex::new(prs.as_ref())?;
         let token = distr.sample(&mut rng) as u32;
         tokens.push(token);
     }
